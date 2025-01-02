@@ -8,6 +8,7 @@ yarn-error.log*
 auth/
 auth_info.json
 auth_state.json
+datastore.json
 
 # Environment variables
 .env
