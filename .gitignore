@@ -1,0 +1,30 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Auth state and credentials
+auth/
+auth_info.json
+auth_state.json
+
+# Environment variables
+.env
+
+# Logs
+*.log
+logs/
+debug.log
+error.log
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor-specific files
+.vscode/
+.idea/
+
+# Miscellaneous
+*.swp
