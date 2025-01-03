@@ -27,7 +27,7 @@ async function saveDatastore(datastore) {
 }
 
 function parseUsage(rawString) {
-    const lines = rawString.split('\n').slice(1);
+    const lines = rawString.replace(/pcs/g,'').replace(/pc/g,'').split('\n').slice(1);
     const usageMap = new Map();
 
     lines.forEach((line) => {

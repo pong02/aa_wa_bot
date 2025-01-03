@@ -1,13 +1,13 @@
 {
-  "TMP-Small": 999,
-  "TMP-C5": 999,
+  "TMP-Small": 993,
+  "TMP-C5": 993,
   "Express": 999,
-  "TMP-Large": 999,
-  "Small": 699,
-  "C5": 699,
-  "C4": 999,
-  "Satchel": 999,
-  "Parcel-Medium": 999,
-  "Parcel-ExLarge": 999,
-  "Parcel-Box": 999
+  "TMP-Large": 1000,
+  "Small": 988,
+  "C5": 890,
+  "C4": 997,
+  "Satchel": 1000,
+  "Parcel-Medium": 1000,
+  "Parcel-ExLarge": 1000,
+  "Parcel-Box": 1000
 }
