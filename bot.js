@@ -333,6 +333,12 @@ async function startBot() {
             return;
         }
 
+        if (text.startsWith('/inventory')) {
+            await sock.sendMessage(sender, { text: `${printInventory}` });
+            await sock.sendMessage(sender, { text: `${printStampInventory}` });
+            return;
+        }
+
         // Restrict non-public commands to allowed groups
         if (allowedGroups.includes(sender)) {
             if (text.startsWith('/list-registered')) {
