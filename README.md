@@ -29,3 +29,6 @@ All data that you can edit will be stored in the storage folder. It is a simple 
 - `envelope_inventory.json` holds all the envelope counts
 - `envelope_stamp.json` holds all the configurations of stamps needed by different envelopes
 - `stamp_inventory.json` holds all the stamp counts
+
+#### wiki page
+https://pong02.github.io/bot-help/

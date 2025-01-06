@@ -328,6 +328,11 @@ async function startBot() {
             return;
         }
 
+        if (text.startsWith('/help')) {
+            await sock.sendMessage(sender, { text: `https://pong02.github.io/bot-help/` });
+            return;
+        }
+
         // Restrict non-public commands to allowed groups
         if (allowedGroups.includes(sender)) {
             if (text.startsWith('/list-registered')) {
@@ -361,22 +366,6 @@ async function startBot() {
                 return;
             }
         } else {
-
-            if (text.startsWith('/list-groups')) {
-                const groupList = await listGroups(sock, sender);
-                sock.groupList = groupList;
-                return;
-            }
-    
-            if (text.startsWith('/register') && sock.groupList) {
-                await registerGroups(sock, sender, text, sock.groupList);
-                return;
-            }
-    
-            if (text.startsWith('/ping')) {
-                await sock.sendMessage(sender, { text: `ok` });
-                return;
-            }
             console.log(`Message ignored from unregistered group: ${sender}`);
         }
     });
