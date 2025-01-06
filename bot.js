@@ -334,8 +334,8 @@ async function startBot() {
         }
 
         if (text.startsWith('/inventory')) {
-            await sock.sendMessage(sender, { text: `${printInventory}` });
-            await sock.sendMessage(sender, { text: `${printStampInventory}` });
+            await sock.sendMessage(sender, { text: `${printInventory()}` });
+            await sock.sendMessage(sender, { text: `${printStampInventory()}` });
             return;
         }
 
