@@ -5,6 +5,7 @@ const qrcode = require('qrcode-terminal');
 const inventoryPath = path.resolve(__dirname, 'storage/envelope_inventory.json');
 const stampInventoryPath = path.resolve(__dirname, 'storage/stamp_inventory.json');
 const stampConfigPath = path.resolve(__dirname, 'storage/envelope_stamp.json');
+const pricesPath = path.resolve(__dirname, 'storage/prices.json');
 const groupsFilePath = path.resolve(__dirname, 'settings/groups.json');
 const authDir = './auth';
 const dataStorePath = './datastore.json';
@@ -13,6 +14,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Ensure required files exist
 if (!fs.existsSync(dataStorePath)) fs.writeFileSync(dataStorePath, JSON.stringify({}));
 if (!fs.existsSync(groupsFilePath)) fs.writeFileSync(groupsFilePath, JSON.stringify([]));
+if (!fs.existsSync(pricesPath)) fs.writeFileSync(pricesPath, JSON.stringify({}, null, 2));
 
 // Utility functions for file storage
 function loadAllowedGroups() {
@@ -21,6 +23,60 @@ function loadAllowedGroups() {
 
 function saveAllowedGroups(groups) {
     fs.writeFileSync(groupsFilePath, JSON.stringify(groups, null, 2));
+}
+
+function loadPrices() {
+    if (fs.existsSync(pricesPath)) {
+        return JSON.parse(fs.readFileSync(pricesPath, 'utf-8'));
+    }
+    return {};
+}
+
+function savePrices(prices) {
+    fs.writeFileSync(pricesPath, JSON.stringify(prices, null, 2));
+}
+
+function addPrices(rawString) {
+    // Load existing prices
+    const prices = loadPrices();
+
+    const lines = rawString.split('\n').slice(1); // Remove the command line
+    let response = 'Price Updates:\n';
+
+    lines.forEach((line) => {
+        const [envelopeType, price] = line.split(':').map((s) => s.trim());
+        if (envelopeType && price && !isNaN(price)) {
+            const existingKey = Object.keys(prices).find(
+                (key) => key.toUpperCase() === envelopeType.toUpperCase()
+            );
+
+            const normalizedKey = existingKey || envelopeType;
+            prices[normalizedKey] = parseFloat(price); 
+            if (existingKey) {
+                response += `${normalizedKey}: Updated to ${parseFloat(price)}\n`;
+            }
+            else {
+                response += `${normalizedKey}: Added new price for ${envelopeType} at ${parseFloat(price)}\n`;
+            }
+        } else {
+            response += `Invalid entry: ${line}\n`;
+        }
+    });
+
+    savePrices(prices); // Save updated prices
+    return response;
+}
+
+function listPrices() {
+    const prices = loadPrices();
+    if (Object.keys(prices).length === 0) return 'No prices found.';
+
+    let response = 'Prices:\n';
+    for (const [envelopeType, price] of Object.entries(prices)) {
+        response += `${envelopeType}: ${price}\n`;
+    }
+
+    return response;
 }
 
 async function loadDatastore() {
@@ -333,18 +389,30 @@ async function startBot() {
             return;
         }
 
-        if (text.startsWith('/inventory')) {
-            const inventoryNow = printInventory();
-            const stampsNow = printStampInventory();
-            await sock.sendMessage(sender, { text: `${inventoryNow}` });
-            await sock.sendMessage(sender, { text: `${stampsNow}` });
-            return;
-        }
-
         // Restrict non-public commands to allowed groups
         if (allowedGroups.includes(sender)) {
             if (text.startsWith('/list-registered')) {
                 await listRegisteredGroups(sock, sender);
+                return;
+            }
+
+            if (text.startsWith('/add-prices')) {
+                const response = addPrices(text);
+                await sock.sendMessage(sender, { text: response });
+                return;
+            }
+            
+            if (text.startsWith('/prices')) {
+                const response = listPrices();
+                await sock.sendMessage(sender, { text: response });
+                return;
+            }
+
+            if (text.startsWith('/inventory')) {
+                const inventoryNow = printInventory();
+                const stampsNow = printStampInventory();
+                await sock.sendMessage(sender, { text: `${inventoryNow}` });
+                await sock.sendMessage(sender, { text: `${stampsNow}` });
                 return;
             }
     
