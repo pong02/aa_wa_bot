@@ -10,6 +10,7 @@ auth_info.json
 auth_state.json
 datastore.json
 settings/
+storage/
 
 # Environment variables
 .env

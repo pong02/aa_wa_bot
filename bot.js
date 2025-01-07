@@ -290,6 +290,7 @@ function addEnvelopes(rawString) {
 
     return response;
 }
+
 function addStamps(rawString) {
     // Load the stamp inventory from file
     let stampInventory = fs.existsSync(stampInventoryPath) ? JSON.parse(fs.readFileSync(stampInventoryPath, 'utf-8')) : {};
@@ -332,6 +333,39 @@ function addStamps(rawString) {
     fs.writeFileSync(stampInventoryPath, JSON.stringify(finalStampInventory, null, 2));
     console.log('Stamp inventory updated:', finalStampInventory);
 
+    return response;
+}
+
+function calculateTotalCost(rawString) {
+    // Load existing prices
+    const prices = loadPrices();
+
+    const lines = rawString.split('\n').slice(1); // Remove the command line
+    let response = 'Purchase Summary:\n';
+    let totalCost = 0;
+
+    lines.forEach((line) => {
+        const [envelopeType, quantity] = line.split(':').map((s) => s.trim());
+        if (envelopeType && quantity && !isNaN(quantity)) {
+            // Find existing match ignoring case
+            const existingKey = Object.keys(prices).find(
+                (key) => key.toUpperCase() === envelopeType.toUpperCase()
+            );
+
+            if (existingKey) {
+                const price = prices[existingKey];
+                const cost = price * parseInt(quantity, 10);
+                totalCost += cost;
+                response += `${existingKey}: ${quantity} * ${price} = ${cost.toFixed(2)}\n`;
+            } else {
+                response += `${envelopeType}: Not found\n`;
+            }
+        } else {
+            response += `Invalid entry: ${line}\n`;
+        }
+    });
+
+    response += `Total: ${totalCost.toFixed(2)}`;
     return response;
 }
 
@@ -413,6 +447,12 @@ async function startBot() {
                 const stampsNow = printStampInventory();
                 await sock.sendMessage(sender, { text: `${inventoryNow}` });
                 await sock.sendMessage(sender, { text: `${stampsNow}` });
+                return;
+            }
+
+            if (text.startsWith('/buy')) {
+                const response = calculateTotalCost(text);
+                await sock.sendMessage(sender, { text: response });
                 return;
             }
     
