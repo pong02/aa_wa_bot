@@ -1,3 +1,4 @@
+const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
@@ -7,10 +8,41 @@ const stampInventoryPath = path.resolve(__dirname, 'storage/stamp_inventory.json
 const stampConfigPath = path.resolve(__dirname, 'storage/envelope_stamp.json');
 const pricesPath = path.resolve(__dirname, 'storage/prices.json');
 const groupsFilePath = path.resolve(__dirname, 'settings/groups.json');
+const googleApiKey = path.resolve(__dirname, 'auth/service-account-key.json');
 const authDir = './auth';
 const logger = require('./logger');
+const vision = require('@google-cloud/vision');
+const stringSimilarity = require('string-similarity');
+const csv = require('csv-parser');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Set up the Vision API client
+const visionClient = new vision.ImageAnnotatorClient({
+    keyFilename: googleApiKey
+});
+
+// Reference data (to be set by /ocr-reference)
+let referenceData = [];
+
+// Load CSV reference data
+function loadReference(filePath) {
+    logger.info('Loading reference data from CSV.');
+    return new Promise((resolve, reject) => {
+        const rows = [];
+        fs.createReadStream(filePath)
+            .pipe(csv())
+            .on('data', (data) => rows.push(data))
+            .on('end', () => {
+                logger.info(`Loaded ${rows.length} rows of reference data.`);
+                resolve(rows);
+            })
+            .on('error', (err) => {
+                logger.error('Error loading reference data:', err);
+                reject(err);
+            });
+    });
+}
 
 // Ensure required files exist
 if (!fs.existsSync(dataStorePath)) fs.writeFileSync(dataStorePath, JSON.stringify({}));
@@ -38,7 +70,6 @@ function savePrices(prices) {
 }
 
 function addPrices(rawString) {
-    logger.debug("Add prices start");
     const prices = loadPrices();
 
     const lines = rawString.split('\n').slice(1); // Remove the command line
@@ -372,14 +403,162 @@ function calculateTotalCost(rawString) {
     return response;
 }
 
-function ocr(img) {
-    //implement google vision
+function printMatch(rowStr,similarity,caption) {
+    let row = rowStr.join(', ').trim(" ").trim("*").replace('*','x');
+    let confidence = (similarity * 100).toFixed(2)
+    let optionalCaption = "";
+    if (caption) {
+        optionalCaption = "Caption: "+caption
+    }
+    return `Matched Row:${row}\nConfidence: ${confidence}%${optionalCaption}`
 }
 
-function closestRow(ocrResult){
-    //implement string-similarity (leveshtein-distance)
-    // return matched row as comma separated value
+function printOCR(rowStr,similarity,caption) {
+    let row = rowStr.trim(" ").trim("*");
+    let optionalCaption = "";
+    if (caption) {
+        optionalCaption = "Caption: "+caption
+    }
+    return `Read label:${row}\nConfidence: 0%${optionalCaption}`
 }
+
+async function ocr(imageBuffer) {
+    try {
+        logger.info('Performing OCR on image.');
+        // Ensure imageBuffer is base64-encoded as expected by Vision API
+        const request = {
+            image: { content: imageBuffer.toString('base64') },
+            features: [{ type: 'TEXT_DETECTION' }]
+        };
+        
+        logger.debug('OCR request:', request);
+
+        const [result] = await visionClient.annotateImage(request);
+        const detections = result.textAnnotations || [];
+        const text = detections.length ? detections[0].description : '';
+        
+        logger.debug('OCR result:', text);
+        return text;
+    } catch (error) {
+        logger.error('Error during OCR:', error);
+        return null;
+    }
+}
+
+function preprocessLabel(text) {
+    return text
+        .replace(/^To:\s*/, '')
+        .replace(/^\*+|\*+$/g, '')
+        .trim();
+}
+
+
+function closestRow(ocrResult, reference) {
+    const preprocessedOcr = preprocessLabel(ocrResult);
+
+    
+    if (reference.length === 0) {
+        return {match: preprocessedOcr, confidence: 0}
+    }
+
+    logger.debug(`Matching Label ${preprocessedOcr} with reference data...`)
+
+    let bestMatch = { similarity: 0, row: null };
+
+    reference.forEach((row) => {
+        const preprocessedRow = Object.entries(row)
+            .filter(([key]) => !['ID', 'Quantity'].includes(key))
+            .map(([_, value]) => value) // Extract the values
+            .join(' ');
+
+        const similarity = stringSimilarity.compareTwoStrings(preprocessedOcr, preprocessedRow);
+
+        if (similarity > bestMatch.similarity) {
+            bestMatch = { similarity, row };
+            logger.debug(`Highest match so far (${similarity}): ${bestMatch.row}`)
+        }
+    });
+
+    logger.info(`Best match confidence: ${bestMatch.similarity}`);
+    return { match: bestMatch.row, confidence: bestMatch.similarity };
+}
+
+let isOcrSessionActive = false;
+let isAwaitingCsv = false;
+let ocrResults = [];
+
+async function startOcrSession(sock, sender) {
+    logger.info('Starting OCR session.');
+    if (referenceData.length === 0){
+        logger.warn("OCR started with no reference, 100% failure rate")
+        await sock.sendMessage(sender, { text: 'OCR session started without reference csv, /ocr-reference to avoid failing every OCR.' });
+    }
+    isOcrSessionActive = true;
+    ocrResults = [];
+    await sock.sendMessage(sender, { text: 'OCR session started. Send images to process.' });
+}
+
+async function endOcrSession(sock, sender) {
+    logger.info('Ending OCR session.');
+    isOcrSessionActive = false;
+    const resultPath = path.resolve(__dirname, 'ocr_results.csv');
+    const csvContent = ocrResults.map((row) => Object.values(row).join(',')).join('\n');
+    fs.writeFileSync(resultPath, csvContent);
+
+    logger.info('Sending OCR results as CSV.');
+    await sock.sendMessage(sender, {
+        document: { url: resultPath },
+        mimetype: 'text/csv',
+        fileName: 'ocr_results.csv'
+    });
+
+    fs.unlinkSync(resultPath);
+}
+
+
+async function handleImage(sock, sender, imageBuffer, caption) {
+    if (!isOcrSessionActive) {
+        logger.warn('Image received outside of OCR session.');
+        await sock.sendMessage(sender, { text: 'OCR session is not active. Start with /ocr-start.' });
+        return;
+    }
+
+    if (referenceData.length === 0) {
+        logger.warn('No reference data loaded.');
+        await sock.sendMessage(sender, { text: 'No reference data available. Please upload reference data.' });
+        //wont stop you but this will always be 0 confidence, thus always fail to match.
+    }
+
+    const ocrText = await ocr(imageBuffer);
+    if (!ocrText) {
+        logger.warn('No text detected in the image.');
+        await sock.sendMessage(sender, { text: 'No text detected in the image.' });
+        return;
+    }
+
+    const { match, confidence } = closestRow(ocrText, referenceData);
+    if (match && confidence > 0.75) {
+        ocrResults.push({ ...match, caption, confidence });
+        logger.info(`Matched row added to results with confidence ${confidence}:`, match);
+        await sock.sendMessage(sender, {
+            text: printMatch(Object.values(match),confidence,caption)
+            });
+    } else if (match && confidence == 0) {
+        logger.info('No reference provided, no match available.');
+        await sock.sendMessage(sender, {
+            text: printOCR(match,confidence,caption)
+            });
+    } else if (match) {
+        logger.info('Low confidence for the image. Review required.');
+        await sock.sendMessage(sender, {
+            text: printMatch(Object.values(match),confidence,caption)
+            });
+    } else {
+        logger.info('No matching row found for the image.');
+        await sock.sendMessage(sender, { text: 'No matching row found in the reference data.' });
+    }
+}
+
 
 // Bot initialization
 async function startBot() {
@@ -419,6 +598,7 @@ async function startBot() {
         const text = message.message?.conversation || "";
 
         const allowedGroups = loadAllowedGroups();
+
         if (text.startsWith('/list-groups')) {
             const groupList = await listGroups(sock, sender);
             sock.groupList = groupList;
@@ -457,23 +637,104 @@ async function startBot() {
             }
 
             if (text.startsWith('/ocr-reference')) {
-                // read th csv attached as reference
+                isAwaitingCsv = true;
+                await sock.sendMessage(sender, { text: 'Please send the CSV file now, making sure there are no captions on the attachment.' });
+                logger.info('Bot is now awaiting a CSV file.');
                 return;
             }
 
+            if (isAwaitingCsv && message.message.documentMessage) {
+                const documentMessage = message.message.documentMessage;
+                const mimeType = documentMessage.mimetype || '';
+            
+                // Check if the MIME type is valid for a CSV
+                if (!['text/csv', 'application/vnd.ms-excel'].includes(mimeType)) {
+                    logger.warn('Received non-CSV file.');
+                    isAwaitingCsv = false; // Reset flag
+                    await sock.sendMessage(sender, { text: 'Invalid file type. Please send a CSV file.' });
+                    return;
+                }
+            
+                try {
+                    const filePath = path.resolve(__dirname, 'reference.csv');
+            
+                    // Download the document as a stream
+                    const stream = await downloadMediaMessage(message);
+                    if (!stream) {
+                        logger.error('Failed to download document.');
+                        await sock.sendMessage(sender, { text: 'Failed to download the attached file. Please try again.' });
+                        return;
+                    }
+            
+                    // Convert stream to buffer
+                    const buffer = await new Promise((resolve, reject) => {
+                        const chunks = [];
+                        stream.on('data', (chunk) => chunks.push(chunk));
+                        stream.on('end', () => resolve(Buffer.concat(chunks)));
+                        stream.on('error', (err) => reject(err));
+                    });
+            
+                    if (!buffer || buffer.length === 0) {
+                        logger.error('File download resulted in an empty buffer.');
+                        await sock.sendMessage(sender, { text: 'Failed to download the attached file. Please try again.' });
+                        return;
+                    }
+            
+                    // Save the file locally
+                    fs.writeFileSync(filePath, buffer);
+                    logger.info(`File saved at ${filePath}`);
+            
+                    // Load reference data from the file
+                    referenceData = await loadReference(filePath);
+                    fs.unlinkSync(filePath); // Delete the file after loading reference data
+            
+                    // Confirm success to the user
+                    await sock.sendMessage(sender, { text: 'Reference data loaded successfully.' });
+                } catch (error) {
+                    logger.error('Error handling the CSV file:', error);
+                    await sock.sendMessage(sender, { text: 'An error occurred while loading the reference data. Please try again.' });
+                } finally {
+                    isAwaitingCsv = false; // Reset flag after processing
+                }
+                return;
+            }
+            
             if (text.startsWith('/ocr-start')) {
-                // when this is triggered keep listening for images, keeping the image's caption as well
-                result = ocr(img)
-                match = closestRow(result,reference)
-                //write best result to result csv, with last column being the caption
-                //for each message received, send the matched row in chat
+                await startOcrSession(sock, sender);
                 return;
             }
 
             if (text.startsWith('/ocr-end')) {
-                // stop listening for image
-                //return the result csv
+                await endOcrSession(sock, sender);
                 return;
+            }
+
+            if (message.message.imageMessage) {
+                if (!isOcrSessionActive) {
+                    logger.warn('Image received outside of OCR session. Ignoring.');
+                    await sock.sendMessage(sender, { text: 'OCR session is not active. Start with /ocr-start.' });
+                    return;
+                }
+            
+                try {
+                    logger.info('Attempting to download image message.');
+                    const imageBuffer = await downloadMediaMessage(message, 'buffer', {}, {
+                        logger
+                    });
+            
+                    if (!imageBuffer) {
+                        logger.error('Failed to download image buffer.');
+                        await sock.sendMessage(sender, { text: 'Failed to process image. Please try again.' });
+                        return;
+                    }
+            
+                    logger.debug('Image buffer downloaded successfully. Length:', imageBuffer.length);
+                    const caption = message.message.imageMessage.caption;
+                    await handleImage(sock, sender, imageBuffer, caption);
+                } catch (error) {
+                    logger.error('Error downloading or handling image:', error);
+                    await sock.sendMessage(sender, { text: 'An error occurred while processing the image.' });
+                }
             }
 
             if (text.startsWith('/add-prices')) {
