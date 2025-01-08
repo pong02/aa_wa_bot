@@ -8,6 +8,7 @@ const stampConfigPath = path.resolve(__dirname, 'storage/envelope_stamp.json');
 const pricesPath = path.resolve(__dirname, 'storage/prices.json');
 const groupsFilePath = path.resolve(__dirname, 'settings/groups.json');
 const authDir = './auth';
+const logger = require('./logger');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -37,13 +38,14 @@ function savePrices(prices) {
 }
 
 function addPrices(rawString) {
-    // Load existing prices
+    logger.debug("Add prices start");
     const prices = loadPrices();
 
     const lines = rawString.split('\n').slice(1); // Remove the command line
     let response = 'Price Updates:\n';
 
     lines.forEach((line) => {
+        logger.debug("Now checking price.json: ", line)
         const [envelopeType, price] = line.split(':').map((s) => s.trim());
         if (envelopeType && price && !isNaN(price)) {
             const existingKey = Object.keys(prices).find(
@@ -54,6 +56,7 @@ function addPrices(rawString) {
             prices[normalizedKey] = parseFloat(price); 
             if (existingKey) {
                 response += `${normalizedKey}: Updated to ${parseFloat(price)}\n`;
+                logger.debug(response);
             }
             else {
                 response += `${normalizedKey}: Added new price for ${envelopeType} at ${parseFloat(price)}\n`;
@@ -369,8 +372,19 @@ function calculateTotalCost(rawString) {
     return response;
 }
 
+function ocr(img) {
+    //implement google vision
+}
+
+function closestRow(ocrResult){
+    //implement string-similarity (leveshtein-distance)
+    // return matched row as comma separated value
+}
+
 // Bot initialization
 async function startBot() {
+
+    logger.info('Bot is starting...');
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const sock = makeWASocket({ auth: state });
 
@@ -381,14 +395,17 @@ async function startBot() {
 
         if (qr) {
             console.log('Scan the QR code below to log in:');
+            logger.info('QR code generated.');
             qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'open') {
             console.log('Bot is now connected!');
+            logger.info('Bot reconnected with saved credentials');
         } else if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Connection closed. Reconnecting...', shouldReconnect);
+            logger.info('Connection closed, trying to reconnect...');
             if (shouldReconnect) startBot();
         }
     });
@@ -405,11 +422,18 @@ async function startBot() {
         if (text.startsWith('/list-groups')) {
             const groupList = await listGroups(sock, sender);
             sock.groupList = groupList;
+            logger.info('Sent group list');
+            logger.debug(groupList);
             return;
         }
 
         if (text.startsWith('/register') && sock.groupList) {
+            let oldGroups = loadAllowedGroups();
             await registerGroups(sock, sender, text, sock.groupList);
+            logger.info('Registering groups');
+            logger.debug("Received:",text);
+            logger.debug("Before:",oldGroups);
+            logger.debug("After",loadAllowedGroups());
             return;
         }
 
@@ -427,18 +451,47 @@ async function startBot() {
         if (allowedGroups.includes(sender)) {
             if (text.startsWith('/list-registered')) {
                 await listRegisteredGroups(sock, sender);
+                logger.info('Listing groups');
+                logger.debug("Found:",loadAllowedGroups());
+                return;
+            }
+
+            if (text.startsWith('/ocr-reference')) {
+                // read th csv attached as reference
+                return;
+            }
+
+            if (text.startsWith('/ocr-start')) {
+                // when this is triggered keep listening for images, keeping the image's caption as well
+                result = ocr(img)
+                match = closestRow(result,reference)
+                //write best result to result csv, with last column being the caption
+                //for each message received, send the matched row in chat
+                return;
+            }
+
+            if (text.startsWith('/ocr-end')) {
+                // stop listening for image
+                //return the result csv
                 return;
             }
 
             if (text.startsWith('/add-prices')) {
+                let oldPrices = listPrices();
                 const response = addPrices(text);
+                logger.info('Adding new Prices');
+                logger.debug("Received:",text);
                 await sock.sendMessage(sender, { text: response });
+                logger.debug("Before:",oldPrices);
+                logger.debug("After",listPrices());
                 return;
             }
             
             if (text.startsWith('/prices')) {
                 const response = listPrices();
                 await sock.sendMessage(sender, { text: response });
+                logger.info('Listing prices');
+                logger.debug("Found:",response);
                 return;
             }
 
@@ -447,6 +500,9 @@ async function startBot() {
                 const stampsNow = printStampInventory();
                 await sock.sendMessage(sender, { text: `${inventoryNow}` });
                 await sock.sendMessage(sender, { text: `${stampsNow}` });
+                logger.info('Listing inventory');
+                logger.debug("Envelope:",inventoryNow);
+                logger.debug("Stamp:",stampsNow);
                 return;
             }
 
@@ -467,22 +523,30 @@ async function startBot() {
                 await sock.sendMessage(sender, { text: `${inventoryNow}` });
                 await sock.sendMessage(sender, { text: `Stamp Changes:\n${stampResponse}` });
                 await sock.sendMessage(sender, { text: `${stampsNow}` });
+                logger.info('Inventory Change');
+                logger.debug("Envelope:",response);
+                logger.debug("Stamp:",stampResponse);
                 return;
             }
     
             if (text.startsWith('/add-envelopes')) {
                 const response = addEnvelopes(text);
                 await sock.sendMessage(sender, { text: response });
+                logger.info('Envelope Change');
+                logger.debug("Envelope:",response);
                 return;
             }
     
             if (text.startsWith('/add-stamps')) {
                 const response = addStamps(text);
                 await sock.sendMessage(sender, { text: response });
+                logger.info('Stamp Change');
+                logger.debug("Stamp:",stampResponse);
                 return;
             }
         } else {
             console.log(`Message ignored from unregistered group: ${sender}`);
+            logger.info(`Ignored Message from ${sender}`);
         }
     });
 }
