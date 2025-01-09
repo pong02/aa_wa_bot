@@ -572,10 +572,7 @@ async function handleImage(sock, sender, imageBuffer, caption) {
     } else if (match) {
         logger.info('Low confidence for the image. Review required.');
         await sock.sendMessage(sender, {
-            text: printMatch(Object.values(match), confidence, caption)
-        });
-        await sock.sendMessage(sender, {
-            text: printOCR(ocrText, caption)
+            text: printMatch(Object.values(match), confidence, caption) + "\n\n" + printOCR(ocrText, caption)
         });
     } else {
         logger.info('No matching row found for the image.');
