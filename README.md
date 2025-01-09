@@ -30,5 +30,8 @@ All data that you can edit will be stored in the storage folder. It is a simple 
 - `envelope_stamp.json` holds all the configurations of stamps needed by different envelopes
 - `stamp_inventory.json` holds all the stamp counts
 
+####  Configurations available
+There are some configurable aspects of this bot, all found in the settings directory. The groups that are whitelisted will have their IDs stored in `groups.json` whereas the ocr related configuration will be in the `ocr-config.json`.
+
 #### wiki page
 https://pong02.github.io/bot-help/
