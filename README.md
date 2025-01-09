@@ -30,8 +30,17 @@ All data that you can edit will be stored in the storage folder. It is a simple 
 - `envelope_stamp.json` holds all the configurations of stamps needed by different envelopes
 - `stamp_inventory.json` holds all the stamp counts
 
-####  Configurations available
+#### Configurations available
 There are some configurable aspects of this bot, all found in the settings directory. The groups that are whitelisted will have their IDs stored in `groups.json` whereas the ocr related configuration will be in the `ocr-config.json`.
+
+#### API Keys 
+Your copy of `service-account-key.json` must be present in /auth directory for Google's vision api to work. Please get it from the Google Vision API following these steps:
+1. Once the service account is created, you'll see it listed in the Service Accounts page.
+2. Find your service account in the list, click the three dots menu on the right, and select "Manage keys".
+3. Click "Add Key" and then "Create New Key".
+4. Choose JSON as the key type and click "Create".
+5. A JSON file containing your credentials will be downloaded to your computer.
+6. Copy the file into the /auth directory and rename it to `service-account-key.json`.
 
 #### wiki page
 https://pong02.github.io/bot-help/
