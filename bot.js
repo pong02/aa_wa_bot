@@ -415,17 +415,23 @@ function calculateTotalCost(rawString) {
 }
 
 function printMatch(rowStr, similarity, caption) {
+    let indicator = '🔴';
+    if (similarity > threshold){
+        indicator = '🟢';
+    } else if (similarity > 0.5){
+        indicator = '🟠';
+    }
     let row = rowStr.join(', ').trim(" ").trim("*").replace('*', 'x');
-    let reviewStr = "";
+    let reviewStr = "Matched Row";
     if (similarity < threshold) {
-        reviewStr = "with LOW CONFIDENCE, *[ ! ] REVIEW NEEDED [ ! ]* "
+        reviewStr = "Matched with LOW CONFIDENCE, *⚠️ REVIEW NEEDED ⚠️* "
     }
     let confidence = (similarity * 100).toFixed(2)
     let optionalCaption = "";
     if (caption) {
         optionalCaption = "Caption: " + caption
     }
-    return `Matched Row ${reviewStr}:${row}\nConfidence: ${confidence}%${optionalCaption}`
+    return `${reviewStr}: ${row}\nConfidence: ${confidence}% ${indicator} ${optionalCaption}`
 }
 
 function printOCR(rowStr, caption) {
@@ -434,7 +440,7 @@ function printOCR(rowStr, caption) {
     if (caption) {
         optionalCaption = "Caption: " + caption
     }
-    return `Read label: ${row}\nConfidence: 0%${optionalCaption}`
+    return `🔍 Read label: ${row}\nConfidence: 0%${optionalCaption}`
 }
 
 async function ocr(imageBuffer) {
@@ -569,7 +575,7 @@ async function handleImage(sock, sender, imageBuffer, caption) {
             text: printMatch(Object.values(match), confidence, caption)
         });
         await sock.sendMessage(sender, {
-            text: printOCR(match, caption)
+            text: printOCR(ocrText, caption)
         });
     } else {
         logger.info('No matching row found for the image.');
