@@ -418,7 +418,7 @@ function printMatch(rowStr, similarity, caption) {
     let row = rowStr.join(', ').trim(" ").trim("*").replace('*', 'x');
     let reviewStr = "";
     if (similarity < threshold) {
-        reviewStr = "with Low Confidence value, Review required "
+        reviewStr = "with LOW CONFIDENCE, *[ ! ] REVIEW NEEDED [ ! ]* "
     }
     let confidence = (similarity * 100).toFixed(2)
     let optionalCaption = "";
@@ -428,7 +428,7 @@ function printMatch(rowStr, similarity, caption) {
     return `Matched Row ${reviewStr}:${row}\nConfidence: ${confidence}%${optionalCaption}`
 }
 
-function printOCR(rowStr, similarity, caption) {
+function printOCR(rowStr, caption) {
     let row = rowStr.trim(" ").trim("*");
     let optionalCaption = "";
     if (caption) {
@@ -561,12 +561,15 @@ async function handleImage(sock, sender, imageBuffer, caption) {
     } else if (match && confidence == 0) {
         logger.info('No reference provided, no match available.');
         await sock.sendMessage(sender, {
-            text: printOCR(match, confidence, caption)
+            text: printOCR(match, caption)
         });
     } else if (match) {
         logger.info('Low confidence for the image. Review required.');
         await sock.sendMessage(sender, {
             text: printMatch(Object.values(match), confidence, caption)
+        });
+        await sock.sendMessage(sender, {
+            text: printOCR(match, caption)
         });
     } else {
         logger.info('No matching row found for the image.');
