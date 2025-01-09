@@ -16,6 +16,7 @@ const stringSimilarity = require('string-similarity');
 const csv = require('csv-parser');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const threshold = 0.75;
 
 // Set up the Vision API client
 const visionClient = new vision.ImageAnnotatorClient({
@@ -405,12 +406,16 @@ function calculateTotalCost(rawString) {
 
 function printMatch(rowStr,similarity,caption) {
     let row = rowStr.join(', ').trim(" ").trim("*").replace('*','x');
+    let reviewStr = "";
+    if (similarity < threshold) {
+        reviewStr = "with Low Confidence value, Review required "
+    }
     let confidence = (similarity * 100).toFixed(2)
     let optionalCaption = "";
     if (caption) {
         optionalCaption = "Caption: "+caption
     }
-    return `Matched Row:${row}\nConfidence: ${confidence}%${optionalCaption}`
+    return `Matched Row ${reviewStr}:${row}\nConfidence: ${confidence}%${optionalCaption}`
 }
 
 function printOCR(rowStr,similarity,caption) {
@@ -537,7 +542,7 @@ async function handleImage(sock, sender, imageBuffer, caption) {
     }
 
     const { match, confidence } = closestRow(ocrText, referenceData);
-    if (match && confidence > 0.75) {
+    if (match && confidence > threshold) {
         ocrResults.push({ ...match, caption, confidence });
         logger.info(`Matched row added to results with confidence ${confidence}:`, match);
         await sock.sendMessage(sender, {
