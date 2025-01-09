@@ -591,7 +591,14 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
+
+        if (update.error) {
+            logger.error(`Error in connection: ${update.error}`);
+            // Decide on reconnection logic based on error specifics
+        }
+
         const { connection, lastDisconnect, qr } = update;
+        logger.info(`Connection update event: ${JSON.stringify(update)}`);
 
         if (qr) {
             console.log('Scan the QR code below to log in:');
@@ -609,6 +616,17 @@ async function startBot() {
             if (shouldReconnect) startBot();
         }
     });
+
+    // WebSocket state monitoring
+    setInterval(() => {
+        if (sock && sock.ws.readyState !== 1) {
+            logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
+            startBot();  // Attempt to reconnect if not open
+        } else {
+            logger.info('WebSocket is still open.');
+        }
+    }, 5 * 60 * 1000);  // Check every 5 minutes
+    
 
     sock.ev.on('messages.upsert', async (m) => {
         delay(369);
