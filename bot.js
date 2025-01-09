@@ -9,6 +9,7 @@ const stampConfigPath = path.resolve(__dirname, 'storage/envelope_stamp.json');
 const pricesPath = path.resolve(__dirname, 'storage/prices.json');
 const groupsFilePath = path.resolve(__dirname, 'settings/groups.json');
 const googleApiKey = path.resolve(__dirname, 'auth/service-account-key.json');
+const ocrConfig = path.resolve(__dirname, 'settings/ocr-config.json');
 const authDir = './auth';
 const logger = require('./logger');
 const vision = require('@google-cloud/vision');
@@ -16,7 +17,9 @@ const stringSimilarity = require('string-similarity');
 const csv = require('csv-parser');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const threshold = 0.75;
+
+// globals 
+let threshold = 0.75; //default
 
 // Set up the Vision API client
 const visionClient = new vision.ImageAnnotatorClient({
@@ -49,7 +52,14 @@ function loadReference(filePath) {
 if (!fs.existsSync(dataStorePath)) fs.writeFileSync(dataStorePath, JSON.stringify({}));
 if (!fs.existsSync(groupsFilePath)) fs.writeFileSync(groupsFilePath, JSON.stringify([]));
 if (!fs.existsSync(pricesPath)) fs.writeFileSync(pricesPath, JSON.stringify({}, null, 2));
+if (fs.existsSync(ocrConfig)) {
+    config = JSON.parse(fs.readFileSync(ocrConfig, 'utf-8'));
+    threshold = config.threshold;
+} else {
+    logger.warn('Config file not found. Falling back to default threshold.');
+}
 
+logger.info(`OCR initialised with threshold of ${threshold}`);
 // Utility functions for file storage
 function loadAllowedGroups() {
     return JSON.parse(fs.readFileSync(groupsFilePath, 'utf-8'));
@@ -85,7 +95,7 @@ function addPrices(rawString) {
             );
 
             const normalizedKey = existingKey || envelopeType;
-            prices[normalizedKey] = parseFloat(price); 
+            prices[normalizedKey] = parseFloat(price);
             if (existingKey) {
                 response += `${normalizedKey}: Updated to ${parseFloat(price)}\n`;
                 logger.debug(response);
@@ -404,8 +414,8 @@ function calculateTotalCost(rawString) {
     return response;
 }
 
-function printMatch(rowStr,similarity,caption) {
-    let row = rowStr.join(', ').trim(" ").trim("*").replace('*','x');
+function printMatch(rowStr, similarity, caption) {
+    let row = rowStr.join(', ').trim(" ").trim("*").replace('*', 'x');
     let reviewStr = "";
     if (similarity < threshold) {
         reviewStr = "with Low Confidence value, Review required "
@@ -413,18 +423,18 @@ function printMatch(rowStr,similarity,caption) {
     let confidence = (similarity * 100).toFixed(2)
     let optionalCaption = "";
     if (caption) {
-        optionalCaption = "Caption: "+caption
+        optionalCaption = "Caption: " + caption
     }
     return `Matched Row ${reviewStr}:${row}\nConfidence: ${confidence}%${optionalCaption}`
 }
 
-function printOCR(rowStr,similarity,caption) {
+function printOCR(rowStr, similarity, caption) {
     let row = rowStr.trim(" ").trim("*");
     let optionalCaption = "";
     if (caption) {
-        optionalCaption = "Caption: "+caption
+        optionalCaption = "Caption: " + caption
     }
-    return `Read label:${row}\nConfidence: 0%${optionalCaption}`
+    return `Read label: ${row}\nConfidence: 0%${optionalCaption}`
 }
 
 async function ocr(imageBuffer) {
@@ -435,13 +445,13 @@ async function ocr(imageBuffer) {
             image: { content: imageBuffer.toString('base64') },
             features: [{ type: 'TEXT_DETECTION' }]
         };
-        
+
         logger.debug('OCR request:', request);
 
         const [result] = await visionClient.annotateImage(request);
         const detections = result.textAnnotations || [];
         const text = detections.length ? detections[0].description : '';
-        
+
         logger.debug('OCR result:', text);
         return text;
     } catch (error) {
@@ -461,9 +471,9 @@ function preprocessLabel(text) {
 function closestRow(ocrResult, reference) {
     const preprocessedOcr = preprocessLabel(ocrResult);
 
-    
+
     if (reference.length === 0) {
-        return {match: preprocessedOcr, confidence: 0}
+        return { match: preprocessedOcr, confidence: 0 }
     }
 
     logger.debug(`Matching Label ${preprocessedOcr} with reference data...`)
@@ -494,7 +504,7 @@ let ocrResults = [];
 
 async function startOcrSession(sock, sender) {
     logger.info('Starting OCR session.');
-    if (referenceData.length === 0){
+    if (referenceData.length === 0) {
         logger.warn("OCR started with no reference, 100% failure rate")
         await sock.sendMessage(sender, { text: 'OCR session started without reference csv, /ocr-reference to avoid failing every OCR.' });
     }
@@ -546,18 +556,18 @@ async function handleImage(sock, sender, imageBuffer, caption) {
         ocrResults.push({ ...match, caption, confidence });
         logger.info(`Matched row added to results with confidence ${confidence}:`, match);
         await sock.sendMessage(sender, {
-            text: printMatch(Object.values(match),confidence,caption)
-            });
+            text: printMatch(Object.values(match), confidence, caption)
+        });
     } else if (match && confidence == 0) {
         logger.info('No reference provided, no match available.');
         await sock.sendMessage(sender, {
-            text: printOCR(match,confidence,caption)
-            });
+            text: printOCR(match, confidence, caption)
+        });
     } else if (match) {
         logger.info('Low confidence for the image. Review required.');
         await sock.sendMessage(sender, {
-            text: printMatch(Object.values(match),confidence,caption)
-            });
+            text: printMatch(Object.values(match), confidence, caption)
+        });
     } else {
         logger.info('No matching row found for the image.');
         await sock.sendMessage(sender, { text: 'No matching row found in the reference data.' });
@@ -616,9 +626,9 @@ async function startBot() {
             let oldGroups = loadAllowedGroups();
             await registerGroups(sock, sender, text, sock.groupList);
             logger.info('Registering groups');
-            logger.debug("Received:",text);
-            logger.debug("Before:",oldGroups);
-            logger.debug("After",loadAllowedGroups());
+            logger.debug("Received:", text);
+            logger.debug("Before:", oldGroups);
+            logger.debug("After", loadAllowedGroups());
             return;
         }
 
@@ -637,7 +647,7 @@ async function startBot() {
             if (text.startsWith('/list-registered')) {
                 await listRegisteredGroups(sock, sender);
                 logger.info('Listing groups');
-                logger.debug("Found:",loadAllowedGroups());
+                logger.debug("Found:", loadAllowedGroups());
                 return;
             }
 
@@ -651,7 +661,7 @@ async function startBot() {
             if (isAwaitingCsv && message.message.documentMessage) {
                 const documentMessage = message.message.documentMessage;
                 const mimeType = documentMessage.mimetype || '';
-            
+
                 // Check if the MIME type is valid for a CSV
                 if (!['text/csv', 'application/vnd.ms-excel'].includes(mimeType)) {
                     logger.warn('Received non-CSV file.');
@@ -659,10 +669,10 @@ async function startBot() {
                     await sock.sendMessage(sender, { text: 'Invalid file type. Please send a CSV file.' });
                     return;
                 }
-            
+
                 try {
                     const filePath = path.resolve(__dirname, 'reference.csv');
-            
+
                     // Download the document as a stream
                     const stream = await downloadMediaMessage(message);
                     if (!stream) {
@@ -670,7 +680,7 @@ async function startBot() {
                         await sock.sendMessage(sender, { text: 'Failed to download the attached file. Please try again.' });
                         return;
                     }
-            
+
                     // Convert stream to buffer
                     const buffer = await new Promise((resolve, reject) => {
                         const chunks = [];
@@ -678,21 +688,21 @@ async function startBot() {
                         stream.on('end', () => resolve(Buffer.concat(chunks)));
                         stream.on('error', (err) => reject(err));
                     });
-            
+
                     if (!buffer || buffer.length === 0) {
                         logger.error('File download resulted in an empty buffer.');
                         await sock.sendMessage(sender, { text: 'Failed to download the attached file. Please try again.' });
                         return;
                     }
-            
+
                     // Save the file locally
                     fs.writeFileSync(filePath, buffer);
                     logger.info(`File saved at ${filePath}`);
-            
+
                     // Load reference data from the file
                     referenceData = await loadReference(filePath);
                     fs.unlinkSync(filePath); // Delete the file after loading reference data
-            
+
                     // Confirm success to the user
                     await sock.sendMessage(sender, { text: 'Reference data loaded successfully.' });
                 } catch (error) {
@@ -703,7 +713,7 @@ async function startBot() {
                 }
                 return;
             }
-            
+
             if (text.startsWith('/ocr-start')) {
                 await startOcrSession(sock, sender);
                 return;
@@ -720,19 +730,19 @@ async function startBot() {
                     await sock.sendMessage(sender, { text: 'OCR session is not active. Start with /ocr-start.' });
                     return;
                 }
-            
+
                 try {
                     logger.info('Attempting to download image message.');
                     const imageBuffer = await downloadMediaMessage(message, 'buffer', {}, {
                         logger
                     });
-            
+
                     if (!imageBuffer) {
                         logger.error('Failed to download image buffer.');
                         await sock.sendMessage(sender, { text: 'Failed to process image. Please try again.' });
                         return;
                     }
-            
+
                     logger.debug('Image buffer downloaded successfully. Length:', imageBuffer.length);
                     const caption = message.message.imageMessage.caption;
                     await handleImage(sock, sender, imageBuffer, caption);
@@ -746,18 +756,18 @@ async function startBot() {
                 let oldPrices = listPrices();
                 const response = addPrices(text);
                 logger.info('Adding new Prices');
-                logger.debug("Received:",text);
+                logger.debug("Received:", text);
                 await sock.sendMessage(sender, { text: response });
-                logger.debug("Before:",oldPrices);
-                logger.debug("After",listPrices());
+                logger.debug("Before:", oldPrices);
+                logger.debug("After", listPrices());
                 return;
             }
-            
+
             if (text.startsWith('/prices')) {
                 const response = listPrices();
                 await sock.sendMessage(sender, { text: response });
                 logger.info('Listing prices');
-                logger.debug("Found:",response);
+                logger.debug("Found:", response);
                 return;
             }
 
@@ -767,8 +777,8 @@ async function startBot() {
                 await sock.sendMessage(sender, { text: `${inventoryNow}` });
                 await sock.sendMessage(sender, { text: `${stampsNow}` });
                 logger.info('Listing inventory');
-                logger.debug("Envelope:",inventoryNow);
-                logger.debug("Stamp:",stampsNow);
+                logger.debug("Envelope:", inventoryNow);
+                logger.debug("Stamp:", stampsNow);
                 return;
             }
 
@@ -777,37 +787,37 @@ async function startBot() {
                 await sock.sendMessage(sender, { text: response });
                 return;
             }
-    
+
             if (text.startsWith('/estimated-usage')) {
                 const usage = parseUsage(text);
                 const response = computeUsage(usage);
                 const inventoryNow = printInventory();
                 const stampResponse = calculateStampUsage(usage);
                 const stampsNow = printStampInventory();
-    
+
                 await sock.sendMessage(sender, { text: `Inventory Changes:\n${response}` });
                 await sock.sendMessage(sender, { text: `${inventoryNow}` });
                 await sock.sendMessage(sender, { text: `Stamp Changes:\n${stampResponse}` });
                 await sock.sendMessage(sender, { text: `${stampsNow}` });
                 logger.info('Inventory Change');
-                logger.debug("Envelope:",response);
-                logger.debug("Stamp:",stampResponse);
+                logger.debug("Envelope:", response);
+                logger.debug("Stamp:", stampResponse);
                 return;
             }
-    
+
             if (text.startsWith('/add-envelopes')) {
                 const response = addEnvelopes(text);
                 await sock.sendMessage(sender, { text: response });
                 logger.info('Envelope Change');
-                logger.debug("Envelope:",response);
+                logger.debug("Envelope:", response);
                 return;
             }
-    
+
             if (text.startsWith('/add-stamps')) {
                 const response = addStamps(text);
                 await sock.sendMessage(sender, { text: response });
                 logger.info('Stamp Change');
-                logger.debug("Stamp:",stampResponse);
+                logger.debug("Stamp:", stampResponse);
                 return;
             }
         } else {
