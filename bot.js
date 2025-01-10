@@ -596,20 +596,24 @@ async function startBot() {
         logger.info(`Connection update event: ${JSON.stringify(update)}`);
     
         if (update.qr) {
+            logger.info("New QR generated")
             console.log('Scan the QR code below to log in:');
             qrcode.generate(update.qr, { small: true });
         }
     
         if (connection === 'open') {
+            logger.info("Bot has been connected successfully")
             console.log('Bot is now connected!');
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
             if (lastDisconnect?.reason === DisconnectReason.conflict) {
                 console.log('Disconnected due to session replacement, not reconnecting.');
+                logger.info("Not reconnecting, session already replaced")
                 return; // Stop reconnection attempt
             }
             if (!sock.autoReconnecting) {
                 sock.autoReconnecting = true;
+                logger.info("No reconnection attempts found, reconnecting now...")
                 startBot(); // Controlled reconnection
             }
         }
@@ -630,6 +634,7 @@ async function startBot() {
         if (sock && sock.ws.readyState === 1) { // 1 = Open
             sock.ws.ping();
             console.log('Ping sent to keep connection alive.');
+            log.info("Ping!")
         }
     }, 30000); // Ping every 30 seconds
 
