@@ -597,32 +597,23 @@ async function startBot() {
     
         if (update.qr) {
             console.log('Scan the QR code below to log in:');
-            logger.info('QR code generated.');
             qrcode.generate(update.qr, { small: true });
         }
     
         if (connection === 'open') {
             console.log('Bot is now connected!');
-            logger.info('Bot reconnected with saved credentials');
-            sock.autoReconnecting = false;  // Ensure the flag is reset when connection is successful
+            sock.autoReconnecting = false;
         } else if (connection === 'close') {
-            if (lastDisconnect?.error) {
-                const reason = lastDisconnect.error.output?.statusCode;
-                if (reason === DisconnectReason.loggedOut || reason === DisconnectReason.conflict) {
-                    console.log(`Disconnected due to ${reason}, not reconnecting.`);
-                    logger.info(`Disconnected, not attempting to reconnect due to ${reason}.`);
-                    return;
-                }
+            if (lastDisconnect?.reason === DisconnectReason.conflict) {
+                console.log('Disconnected due to session replacement, not reconnecting.');
+                return; // Stop reconnection attempt
             }
-    
-            logger.info('Connection closed, attempting to reconnect...');
             if (!sock.autoReconnecting) {
                 sock.autoReconnecting = true;
                 startBot(); // Controlled reconnection
             }
         }
-    });
-    
+    });    
 
     // WebSocket state monitoring
     setInterval(() => {
