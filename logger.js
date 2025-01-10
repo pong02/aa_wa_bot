@@ -31,7 +31,7 @@ const logger = createLogger({
     ),
     transports: [
         new transports.Console(),
-        new transports.File({ filename: path.resolve(__dirname, 'logs', logFileName) })
+        new transports.File({ filename: path.resolve(__dirname, 'logs', logFileName.replace(' ','')) })
     ]
 });
 
