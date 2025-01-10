@@ -3,7 +3,8 @@ const path = require('path');
 
 // Helper function to format timestamps in a specific timezone
 const getTimestampInTimezone = (timezone) => {
-    return new Intl.DateTimeFormat('en-US', {
+    const now = new Date();
+    const options = {
         timeZone: timezone,
         year: 'numeric',
         month: '2-digit',
@@ -11,12 +12,15 @@ const getTimestampInTimezone = (timezone) => {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit'
-    }).format(new Date());
+    };
+    const formattedDate = new Intl.DateTimeFormat('en-US', options).format(now);
+    const milliseconds = now.getMilliseconds().toString().padStart(3, '0'); // Ensure 3 digits for milliseconds
+    const cleanDate = formattedDate.replace(/[:/]/g, '-').replace(', ', '-');
+    return `${cleanDate}-${milliseconds}`;
 };
 
-// Replace `America/New_York` with your desired timezone
 const timezone = 'Asia/Kuala_Lumpur';
-const timestamp = getTimestampInTimezone(timezone).replace(/[:/]/g, '-'); // Replace colons and slashes for valid filename
+const timestamp = getTimestampInTimezone(timezone); // Now includes milliseconds
 const logFileName = `bot-${timestamp}.log`;
 
 const logger = createLogger({
