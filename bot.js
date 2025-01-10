@@ -627,6 +627,13 @@ async function startBot() {
         }
     }, 5 * 60 * 1000);  // Check every 5 minutes
     
+    //keep alive
+    setInterval(() => {
+        if (sock && sock.ws.readyState === 1) { // 1 = Open
+            sock.ws.ping();
+            console.log('Ping sent to keep connection alive.');
+        }
+    }, 30000); // Ping every 30 seconds
 
     sock.ev.on('messages.upsert', async (m) => {
         delay(369);
