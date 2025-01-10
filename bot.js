@@ -634,7 +634,7 @@ async function startBot() {
         if (sock && sock.ws.readyState === 1) { // 1 = Open
             sock.ws.ping();
             console.log('Ping sent to keep connection alive.');
-            log.info("Ping!")
+            logger.info("Ping!")
         }
     }, 30000); // Ping every 30 seconds
 
