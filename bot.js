@@ -591,31 +591,38 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-
-        if (update.error) {
-            logger.error(`Error in connection: ${update.error}`);
-            // Decide on reconnection logic based on error specifics
-        }
-
-        const { connection, lastDisconnect, qr } = update;
+        const { connection, lastDisconnect } = update;
+    
         logger.info(`Connection update event: ${JSON.stringify(update)}`);
-
-        if (qr) {
+    
+        if (update.qr) {
             console.log('Scan the QR code below to log in:');
             logger.info('QR code generated.');
-            qrcode.generate(qr, { small: true });
+            qrcode.generate(update.qr, { small: true });
         }
-
+    
         if (connection === 'open') {
             console.log('Bot is now connected!');
             logger.info('Bot reconnected with saved credentials');
+            sock.autoReconnecting = false;  // Ensure the flag is reset when connection is successful
         } else if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting...', shouldReconnect);
-            logger.info('Connection closed, trying to reconnect...');
-            if (shouldReconnect) startBot();
+            if (lastDisconnect?.error) {
+                const reason = lastDisconnect.error.output?.statusCode;
+                if (reason === DisconnectReason.loggedOut || reason === DisconnectReason.conflict) {
+                    console.log(`Disconnected due to ${reason}, not reconnecting.`);
+                    logger.info(`Disconnected, not attempting to reconnect due to ${reason}.`);
+                    return;
+                }
+            }
+    
+            logger.info('Connection closed, attempting to reconnect...');
+            if (!sock.autoReconnecting) {
+                sock.autoReconnecting = true;
+                startBot(); // Controlled reconnection
+            }
         }
     });
+    
 
     // WebSocket state monitoring
     setInterval(() => {
