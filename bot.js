@@ -586,7 +586,11 @@ async function startBot() {
 
     logger.info('Bot is starting...');
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
-    const sock = makeWASocket({ auth: state });
+    const sock = makeWASocket({ 
+        auth: state,
+        syncFullHistory: false, 
+        defaultQueryTimeoutMs: undefined
+    });
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -618,6 +622,18 @@ async function startBot() {
             }
         }
     });    
+
+    if (sock) {
+        sock.ev.on('connection.update', update => {
+            if (update.connection === 'open') {
+                logger.info('Connection is now open, monitoring for automatic operations...');
+                setTimeout(() => {
+                    // Log a status update after a delay, to see if automatic operations complete
+                    logger.info('Checking status post connection open...');
+                }, 60000); // Check 1 minute after opening
+            }
+        });
+    }
 
     // WebSocket state monitoring
     setInterval(() => {
