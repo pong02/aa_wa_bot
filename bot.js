@@ -17,9 +17,11 @@ const stringSimilarity = require('string-similarity');
 const csv = require('csv-parser');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_RECONNECTION_ATTEMPTS = 20; 
 
 // globals 
 let threshold = 0.75; //default
+let reconnectionAttempts = 0;
 
 // Set up the Vision API client
 const visionClient = new vision.ImageAnnotatorClient({
@@ -596,32 +598,40 @@ async function startBot() {
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
-    
+
         logger.info(`Connection update event: ${JSON.stringify(update)}`);
-    
+
         if (update.qr) {
             logger.info("New QR generated")
             console.log('Scan the QR code below to log in:');
             qrcode.generate(update.qr, { small: true });
-        }
-    
+        }    
+
         if (connection === 'open') {
             logger.info("Bot has been connected successfully")
             console.log('Bot is now connected!');
+            reconnectionAttempts = 0; 
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
             if (lastDisconnect?.reason === DisconnectReason.conflict) {
                 console.log('Disconnected due to session replacement, not reconnecting.');
-                logger.info("Not reconnecting, session already replaced")
-                return; // Stop reconnection attempt
+                logger.info('Session replacement detected, will not reconnect.');
+                return;
             }
             if (!sock.autoReconnecting) {
-                sock.autoReconnecting = true;
-                logger.info("No reconnection attempts found, reconnecting now...")
-                startBot(); // Controlled reconnection
+                reconnectionAttempts++;
+                logger.info(`Reconnection attempt: ${reconnectionAttempts}`);
+                if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
+                    logger.error('Maximum reconnection attempts reached, bot will exit.');
+                    process.exit(1); // Exit the process to let PM2 restart it
+                } else {
+                    sock.autoReconnecting = true;
+                    logger.info("No reconnection attempts found, reconnecting now...")
+                    startBot(); // Controlled reconnection
+                }
             }
         }
-    });    
+    });
 
     if (sock) {
         sock.ev.on('connection.update', update => {
