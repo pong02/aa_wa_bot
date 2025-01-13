@@ -25,6 +25,9 @@ If the bot keeps timing out after random intervals:
 3. Useful PM2 commands
     - `pm2 logs bot` to see the bot's running logs
     - `pm2 info bot` to see the pm managed information
+    - `pm2 stop bot`
+    - `pm2 delete bot`
+
 
 #### Registering WhatsApp account
 A valid account must be used to register the bot, and please make sure you have at least 1 linked device slot available for the bot to occupy.
