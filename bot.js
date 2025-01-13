@@ -607,6 +607,8 @@ async function startBot() {
             qrcode.generate(update.qr, { small: true });
         }    
 
+        logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
+         
         if (connection === 'open') {
             logger.info("Bot has been connected successfully")
             console.log('Bot is now connected!');
@@ -644,25 +646,6 @@ async function startBot() {
             }
         });
     }
-
-    // WebSocket state monitoring
-    setInterval(() => {
-        if (sock && sock.ws.readyState !== 1) {
-            logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
-            startBot();  // Attempt to reconnect if not open
-        } else {
-            logger.info('WebSocket is still open.');
-        }
-    }, 5 * 60 * 1000);  // Check every 5 minutes
-    
-    //keep alive
-    setInterval(() => {
-        if (sock && sock.ws.readyState === 1) { // 1 = Open
-            sock.ws.ping();
-            console.log('Ping sent to keep connection alive.');
-            logger.info("Ping!")
-        }
-    }, 30000); // Ping every 30 seconds
 
     sock.ev.on('messages.upsert', async (m) => {
         delay(369);
