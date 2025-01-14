@@ -632,6 +632,10 @@ async function startBot() {
                     startBot(); // Controlled reconnection
                 }
             }
+        } else if (connection === 'close' && lastDisconnect?.error?.output?.statusCode === 428) {
+            // Handle specific case where connection closure was due to a critical error
+            logger.error('Critical error detected: Connection Closed. Bot will exit.');
+            process.exit(1);
         }
     });
 
