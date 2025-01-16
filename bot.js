@@ -147,15 +147,6 @@ function listPrices() {
     return response;
 }
 
-async function loadDatastore() {
-    const data = fs.readFileSync(dataStorePath);
-    return JSON.parse(data);
-}
-
-async function saveDatastore(datastore) {
-    fs.writeFileSync(dataStorePath, JSON.stringify(datastore, null, 2));
-}
-
 function parseUsage(rawString) {
     const lines = rawString.replace(/pcs/g, '').replace(/pc/g, '').split('\n').slice(1);
     const usageMap = new Map();
@@ -284,7 +275,7 @@ async function registerGroups(sock, sender, text, groupList) {
         const group = groupList.find((g) => g.number === num);
         if (group && !registeredGroups.includes(group.id)) {
             registeredGroups.push(group.id);
-            response += `${group.name}\n`;
+            response += ` - ${group.name}\n`;
             nonReg = false;
         }
     });
@@ -304,19 +295,19 @@ async function listRegisteredGroups(sock, sender) {
         return;
     }
 
-    let nonReg = true;
+    let count = 0;
     let response = 'Registered Groups:\n';
     for (const groupId of registeredGroups) {
         try {
+            count += 1
             const groupMetadata = await sock.groupMetadata(groupId);
-            response += `- ${groupMetadata.subject}\n`;
-            nonReg = false;
+            response += `${count}.${groupMetadata.subject}\n`;
         } catch (error) {
             console.error(`Error fetching metadata for group ID: ${groupId}`, error);
             response += `- Unknown Group (ID: ${groupId})\n`;
         }
     }
-    if (nonReg){
+    if (count == 0){
         response += "None."
     }
 
@@ -326,15 +317,20 @@ async function listRegisteredGroups(sock, sender) {
 async function registerOcrGroups(sock, sender, text, groupList) {
     const registeredGroups = ocrGroup;
     const numbers = text.replace('/ocr-register', '').split(',').map((num) => parseInt(num.trim(), 10)).filter((num) => !isNaN(num));
+    let nonReg = true;
     let response = 'Registered OCR Groups:\n';
     numbers.forEach((num) => {
-        logger.info("===============",ocrGroup)
         const group = groupList.find((g) => g.number === num);
         if (group && !registeredGroups.includes(group.id)) {
             registeredGroups.push(group.id);
-            response += `${group.name}\n`;
+            response += ` - ${group.name}\n`;
+            nonReg = false;
         }
     });
+
+    if(nonReg){
+        response += "None.";
+    }
 
     saveOcrGroups(registeredGroups);
     await sock.sendMessage(sender, { text: response });
@@ -348,17 +344,22 @@ async function listOcrGroups(sock, sender) {
         return;
     }
 
+    let count = 0;
     let response = 'Registered OCR Groups:\n';
     for (const groupId of registeredGroups) {
         try {
+            count += 1;
             const groupMetadata = await sock.groupMetadata(groupId);
-            response += `- ${groupMetadata.subject}\n`;
+            response += `${count}. ${groupMetadata.subject}\n`;
         } catch (error) {
             console.error(`Error fetching metadata for group ID: ${groupId}`, error);
             response += `- Unknown Group (ID: ${groupId})\n`;
         }
     }
 
+    if(count == 0){
+        response += "None."
+    }
     await sock.sendMessage(sender, { text: response });
 }
 
