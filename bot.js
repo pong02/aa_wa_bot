@@ -615,6 +615,10 @@ async function startBot() {
             reconnectionAttempts = 0; 
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
+            if (lastDisconnect?.reason === DisconnectReason.connectionClosed) {
+                logger.error('Precondition required, can no longer reconnect, exiting peacefully.');
+                process.exit(1); // Exit the process to let PM2 restart it
+            }
             if (lastDisconnect?.reason === DisconnectReason.conflict) {
                 console.log('Disconnected due to session replacement, not reconnecting.');
                 logger.info('Session replacement detected, will not reconnect.');
