@@ -23,6 +23,8 @@ const MAX_RECONNECTION_ATTEMPTS = 20;
 let threshold = 0.75; //default
 let reconnectionAttempts = 0;
 let ocrGroup = [];
+let registeredList = [];
+let registeredOcrList = [];
 
 // Set up the Vision API client
 const visionClient = new vision.ImageAnnotatorClient({
@@ -58,13 +60,13 @@ if (!fs.existsSync(pricesPath)) fs.writeFileSync(pricesPath, JSON.stringify({}, 
 if (fs.existsSync(ocrConfig)) {
     config = JSON.parse(fs.readFileSync(ocrConfig, 'utf-8'));
     threshold = config.threshold;
-    ocrGroup = config.target || [];
+    ocrGroup = config.targets || [];
 } else {
     logger.warn('Config file not found. Falling back to default threshold.');
 }
 
 logger.info(`OCR initialised with threshold of ${threshold}`);
-logger.info(`OCR initialised to listen to groups ${ocrGroup}`);
+logger.info(`OCR initialised to listen to groups ${ocrGroup}.`);
 
 function groupisEmpty(groups) {
     if (Array.isArray(groups) && groups.length > 0) {
@@ -82,7 +84,7 @@ function loadAllowedGroups() {
 
 function saveOcrGroups(groupIds) {
     logger.debug("Before OCR saved:", config)
-    config.targets.push(groupIds);
+    config.targets = groupIds;
     logger.debug("New OCR groups:",config)
     logger.debug(`Added groups ${groupIds} to ocr targets`)
     fs.writeFileSync(ocrConfig, JSON.stringify(config, null, 2), 'utf-8');
@@ -301,12 +303,13 @@ async function listRegisteredGroups(sock, sender) {
         try {
             count += 1
             const groupMetadata = await sock.groupMetadata(groupId);
-            response += `${count}.${groupMetadata.subject}\n`;
+            response += `${count}. ${groupMetadata.subject}\n`;
         } catch (error) {
             console.error(`Error fetching metadata for group ID: ${groupId}`, error);
             response += `- Unknown Group (ID: ${groupId})\n`;
         }
     }
+    registeredList = registeredGroups;
     if (count == 0){
         response += "None."
     }
@@ -338,7 +341,6 @@ async function registerOcrGroups(sock, sender, text, groupList) {
 
 async function listOcrGroups(sock, sender) {
     const registeredGroups = ocrGroup;
-
     if (groupisEmpty(registeredGroups)) {
         await sock.sendMessage(sender, { text: 'No groups are currently registered for OCR. ' });
         return;
@@ -352,14 +354,51 @@ async function listOcrGroups(sock, sender) {
             const groupMetadata = await sock.groupMetadata(groupId);
             response += `${count}. ${groupMetadata.subject}\n`;
         } catch (error) {
-            console.error(`Error fetching metadata for group ID: ${groupId}`, error);
+            logger.error(`Error fetching metadata for group ID: ${groupId}`, error);
             response += `- Unknown Group (ID: ${groupId})\n`;
         }
     }
-
+    registeredOcrList = registeredGroups;
     if(count == 0){
         response += "None."
     }
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function deregisterGroups(sock, sender, text) {
+    const indexesToRemove = text.replace('/deregister', '').split(',').map(num => parseInt(num.trim(), 10)).filter(num => !isNaN(num) && num > 0);
+    logger.debug(`Removal of indices ${indexesToRemove} from list ${registeredOcrList}.`)
+
+    registeredList = registeredList.filter((_, index) => !indexesToRemove.includes(index + 1));
+
+    logger.info(`New list: ${registeredList}.`)
+    saveAllowedGroups(registeredList);
+
+    // Response to the user
+    let response = "Updated Registered Groups:\n" + registeredList.map((group, index) => `${index + 1}. ${group.name}`).join('\n');
+    if (registeredList.length === 0) {
+        response += "None.";
+    }
+
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function deregisterOcrGroups(sock, sender, text) {
+    const indexesToRemove = text.replace('/ocr-deregister', '').split(',').map(num => parseInt(num.trim(), 10)).filter(num => !isNaN(num) && num > 0);
+    logger.debug(`Removal of indices ${indexesToRemove} from list ${registeredOcrList}.`)
+
+    logger.info(`New list: ${registeredList}.`)
+    registeredOcrList = registeredOcrList.filter((_, index) => !indexesToRemove.includes(index + 1));
+
+    // Save the updated OCR list
+    saveOcrGroups(registeredOcrList);
+
+    // Response to the user
+    let response = "Updated OCR Registered Groups:\n" + registeredOcrList.map((group, index) => `${index + 1}. ${group.name}`).join('\n');
+    if (registeredOcrList.length === 0) {
+        response += "None.";
+    }
+
     await sock.sendMessage(sender, { text: response });
 }
 
@@ -755,16 +794,6 @@ async function startBot() {
             return;
         }
 
-        if (text.startsWith('/ocr-register') && sock.groupList) {
-            let oldGroups = loadAllowedGroups();
-            await registerOcrGroups(sock, sender, text, sock.groupList);
-            logger.info('Registering groups');
-            logger.info("Received:", text);
-            logger.info("Before:", oldGroups);
-            logger.info("After", loadAllowedGroups());
-            return;
-        }
-
         if (text.startsWith('/ping')) {
             await sock.sendMessage(sender, { text: `ok` });
             return;
@@ -788,6 +817,38 @@ async function startBot() {
                 await listOcrGroups(sock, sender);
                 logger.info('Listing OCR enabled groups');
                 logger.debug("Found:", ocrGroup);
+                return;
+            }
+
+            if (text.startsWith('/ocr-register') && sock.groupList) {
+                let oldGroups = loadAllowedGroups();
+                await registerOcrGroups(sock, sender, text, sock.groupList);
+                logger.info('Registering groups');
+                logger.info("Received:", text);
+                logger.info("Before:", oldGroups);
+                logger.info("After", loadAllowedGroups());
+                return;
+            }
+
+            if (text.startsWith('/ocr-deregister')) {
+                if (groupisEmpty(registeredOcrList)){
+                    logger.info('No list set before calling deregister');
+                    await sock.sendMessage(sender, { text: 'Please call the /list-ocr function before deregistering' });
+                    return;
+                }
+                logger.info("Removing groups for OCR:");
+                await deregisterOcrGroups(sock, sender, text);
+                return;
+            }
+
+            if (text.startsWith('/deregister')) {
+                if (groupisEmpty(registeredList)){
+                    logger.info('No list set before calling deregister');
+                    await sock.sendMessage(sender, { text: 'Please call the /list-registered function before deregistering' });
+                    return;
+                }
+                logger.info("Removing groups:");
+                await deregisterGroups(sock, sender, text);
                 return;
             }
 
