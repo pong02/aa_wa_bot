@@ -22,6 +22,7 @@ const MAX_RECONNECTION_ATTEMPTS = 20;
 // globals 
 let threshold = 0.75; //default
 let reconnectionAttempts = 0;
+let ocrGroup = [];
 
 // Set up the Vision API client
 const visionClient = new vision.ImageAnnotatorClient({
@@ -57,14 +58,34 @@ if (!fs.existsSync(pricesPath)) fs.writeFileSync(pricesPath, JSON.stringify({}, 
 if (fs.existsSync(ocrConfig)) {
     config = JSON.parse(fs.readFileSync(ocrConfig, 'utf-8'));
     threshold = config.threshold;
+    ocrGroup = config.target || [];
 } else {
     logger.warn('Config file not found. Falling back to default threshold.');
 }
 
 logger.info(`OCR initialised with threshold of ${threshold}`);
-// Utility functions for file storage
+logger.info(`OCR initialised to listen to groups ${ocrGroup}`);
+
+function groupisEmpty(groups) {
+    if (Array.isArray(groups) && groups.length > 0) {
+        logger.info(`Fetched ${groups.length} groups from json`);
+        return false;
+    } else {
+        logger.info("Group is empty");
+        return true;
+    }
+}
+
 function loadAllowedGroups() {
     return JSON.parse(fs.readFileSync(groupsFilePath, 'utf-8'));
+}
+
+function saveOcrGroups(groupIds) {
+    logger.debug("Before OCR saved:", config)
+    config.targets.push(groupIds);
+    logger.debug("New OCR groups:",config)
+    logger.debug(`Added groups ${groupIds} to ocr targets`)
+    fs.writeFileSync(ocrConfig, JSON.stringify(config, null, 2), 'utf-8');
 }
 
 function saveAllowedGroups(groups) {
@@ -85,7 +106,7 @@ function savePrices(prices) {
 function addPrices(rawString) {
     const prices = loadPrices();
 
-    const lines = rawString.split('\n').slice(1); // Remove the command line
+    const lines = rawString.split('\n').slice(1);
     let response = 'Price Updates:\n';
 
     lines.forEach((line) => {
@@ -135,7 +156,6 @@ async function saveDatastore(datastore) {
     fs.writeFileSync(dataStorePath, JSON.stringify(datastore, null, 2));
 }
 
-// Utility functions for inventory and usage
 function parseUsage(rawString) {
     const lines = rawString.replace(/pcs/g, '').replace(/pc/g, '').split('\n').slice(1);
     const usageMap = new Map();
@@ -258,14 +278,19 @@ async function registerGroups(sock, sender, text, groupList) {
     const registeredGroups = loadAllowedGroups();
     const numbers = text.replace('/register', '').split(',').map((num) => parseInt(num.trim(), 10)).filter((num) => !isNaN(num));
 
+    let nonReg = true;
     let response = 'Registered Groups:\n';
     numbers.forEach((num) => {
         const group = groupList.find((g) => g.number === num);
         if (group && !registeredGroups.includes(group.id)) {
             registeredGroups.push(group.id);
             response += `${group.name}\n`;
+            nonReg = false;
         }
     });
+    if (nonReg){
+        response += "None."
+    }
 
     saveAllowedGroups(registeredGroups);
     await sock.sendMessage(sender, { text: response });
@@ -274,12 +299,56 @@ async function registerGroups(sock, sender, text, groupList) {
 async function listRegisteredGroups(sock, sender) {
     const registeredGroups = loadAllowedGroups();
 
-    if (registeredGroups.length === 0) {
+    if (groupisEmpty(registeredGroups)) {
         await sock.sendMessage(sender, { text: 'No groups are currently registered.' });
         return;
     }
 
+    let nonReg = true;
     let response = 'Registered Groups:\n';
+    for (const groupId of registeredGroups) {
+        try {
+            const groupMetadata = await sock.groupMetadata(groupId);
+            response += `- ${groupMetadata.subject}\n`;
+            nonReg = false;
+        } catch (error) {
+            console.error(`Error fetching metadata for group ID: ${groupId}`, error);
+            response += `- Unknown Group (ID: ${groupId})\n`;
+        }
+    }
+    if (nonReg){
+        response += "None."
+    }
+
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function registerOcrGroups(sock, sender, text, groupList) {
+    const registeredGroups = ocrGroup;
+    const numbers = text.replace('/ocr-register', '').split(',').map((num) => parseInt(num.trim(), 10)).filter((num) => !isNaN(num));
+    let response = 'Registered OCR Groups:\n';
+    numbers.forEach((num) => {
+        logger.info("===============",ocrGroup)
+        const group = groupList.find((g) => g.number === num);
+        if (group && !registeredGroups.includes(group.id)) {
+            registeredGroups.push(group.id);
+            response += `${group.name}\n`;
+        }
+    });
+
+    saveOcrGroups(registeredGroups);
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function listOcrGroups(sock, sender) {
+    const registeredGroups = ocrGroup;
+
+    if (groupisEmpty(registeredGroups)) {
+        await sock.sendMessage(sender, { text: 'No groups are currently registered for OCR. ' });
+        return;
+    }
+
+    let response = 'Registered OCR Groups:\n';
     for (const groupId of registeredGroups) {
         try {
             const groupMetadata = await sock.groupMetadata(groupId);
@@ -508,6 +577,7 @@ function closestRow(ocrResult, reference) {
 
 let isOcrSessionActive = false;
 let isAwaitingCsv = false;
+let freshSession = false;
 let ocrResults = [];
 
 async function startOcrSession(sock, sender) {
@@ -605,6 +675,7 @@ async function startBot() {
             logger.info("New QR generated")
             console.log('Scan the QR code below to log in:');
             qrcode.generate(update.qr, { small: true });
+            freshSession = true;
         }    
 
         logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
@@ -619,7 +690,7 @@ async function startBot() {
                 logger.error('Precondition required, can no longer reconnect, exiting peacefully.');
                 process.exit(1); // Exit the process to let PM2 restart it
             }
-            if (lastDisconnect?.reason === DisconnectReason.conflict) {
+            if (lastDisconnect?.reason === DisconnectReason.conflict && !freshSession) {
                 console.log('Disconnected due to session replacement, not reconnecting.');
                 logger.info('Session replacement detected, will not reconnect.');
                 return;
@@ -683,6 +754,16 @@ async function startBot() {
             return;
         }
 
+        if (text.startsWith('/ocr-register') && sock.groupList) {
+            let oldGroups = loadAllowedGroups();
+            await registerOcrGroups(sock, sender, text, sock.groupList);
+            logger.info('Registering groups');
+            logger.info("Received:", text);
+            logger.info("Before:", oldGroups);
+            logger.info("After", loadAllowedGroups());
+            return;
+        }
+
         if (text.startsWith('/ping')) {
             await sock.sendMessage(sender, { text: `ok` });
             return;
@@ -699,6 +780,13 @@ async function startBot() {
                 await listRegisteredGroups(sock, sender);
                 logger.info('Listing groups');
                 logger.debug("Found:", loadAllowedGroups());
+                return;
+            }
+
+            if (text.startsWith('/list-ocr')) {
+                await listOcrGroups(sock, sender);
+                logger.info('Listing OCR enabled groups');
+                logger.debug("Found:", ocrGroup);
                 return;
             }
 
@@ -775,7 +863,7 @@ async function startBot() {
                 return;
             }
 
-            if (message.message.imageMessage) {
+            if (message.message.imageMessage && ocrGroup.includes(sender)) {
                 if (!isOcrSessionActive) {
                     logger.warn('Image received outside of OCR session. Ignoring.');
                     await sock.sendMessage(sender, { text: 'OCR session is not active. Start with /ocr-start.' });
