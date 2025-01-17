@@ -15,11 +15,17 @@ const logger = require('./logger');
 const vision = require('@google-cloud/vision');
 const stringSimilarity = require('string-similarity');
 const csv = require('csv-parser');
+const { get } = require('https');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_RECONNECTION_ATTEMPTS = 20;
 
 // globals 
 let threshold = 0.75; //default
+let reconnectionAttempts = 0;
+let ocrGroup = [];
+let registeredList = [];
+let registeredOcrList = [];
 
 // Set up the Vision API client
 const visionClient = new vision.ImageAnnotatorClient({
@@ -55,14 +61,35 @@ if (!fs.existsSync(pricesPath)) fs.writeFileSync(pricesPath, JSON.stringify({}, 
 if (fs.existsSync(ocrConfig)) {
     config = JSON.parse(fs.readFileSync(ocrConfig, 'utf-8'));
     threshold = config.threshold;
+    ocrGroup = config.targets || [];
 } else {
     logger.warn('Config file not found. Falling back to default threshold.');
 }
 
 logger.info(`OCR initialised with threshold of ${threshold}`);
-// Utility functions for file storage
+logger.info(`OCR initialised to listen to groups ${ocrGroup}.`);
+
+function groupisEmpty(groups) {
+    if (Array.isArray(groups) && groups.length > 0) {
+        logger.info(`Fetched ${groups.length} groups`);
+        return false;
+    } else {
+        logger.info("Group is empty");
+        return true;
+    }
+}
+
 function loadAllowedGroups() {
     return JSON.parse(fs.readFileSync(groupsFilePath, 'utf-8'));
+}
+
+function saveOcrGroups(groupIds) {
+    logger.debug("Before OCR saved:", config)
+    config.targets = groupIds;
+    ocrGroup = groupIds;
+    logger.debug("New OCR groups:", config)
+    logger.debug(`Added groups ${groupIds} to ocr targets`)
+    fs.writeFileSync(ocrConfig, JSON.stringify(config, null, 2), 'utf-8');
 }
 
 function saveAllowedGroups(groups) {
@@ -83,7 +110,7 @@ function savePrices(prices) {
 function addPrices(rawString) {
     const prices = loadPrices();
 
-    const lines = rawString.split('\n').slice(1); // Remove the command line
+    const lines = rawString.split('\n').slice(1);
     let response = 'Price Updates:\n';
 
     lines.forEach((line) => {
@@ -108,7 +135,7 @@ function addPrices(rawString) {
         }
     });
 
-    savePrices(prices); // Save updated prices
+    savePrices(prices);
     return response;
 }
 
@@ -124,16 +151,6 @@ function listPrices() {
     return response;
 }
 
-async function loadDatastore() {
-    const data = fs.readFileSync(dataStorePath);
-    return JSON.parse(data);
-}
-
-async function saveDatastore(datastore) {
-    fs.writeFileSync(dataStorePath, JSON.stringify(datastore, null, 2));
-}
-
-// Utility functions for inventory and usage
 function parseUsage(rawString) {
     const lines = rawString.replace(/pcs/g, '').replace(/pc/g, '').split('\n').slice(1);
     const usageMap = new Map();
@@ -173,7 +190,7 @@ function computeUsage(usageMap) {
     }, {});
 
     fs.writeFileSync(inventoryPath, JSON.stringify(finalInventory, null, 2));
-    console.log('Inventory updated:', finalInventory);
+    logger.debug('Inventory updated:', finalInventory);
 
     return response;
 }
@@ -252,18 +269,37 @@ async function listGroups(sock, sender) {
     return groupList;
 }
 
+async function getGroupName(sock, groupId) {
+    try {
+        const groupMetadata = await sock.groupMetadata(groupId);
+
+        const groupName = groupMetadata.subject;
+
+        logger.debug(`Group translated: ${groupName}`);
+        return groupName;
+    } catch (error) {
+        console.error('Error fetching group name:', error);
+        throw error;
+    }
+}
+
 async function registerGroups(sock, sender, text, groupList) {
     const registeredGroups = loadAllowedGroups();
     const numbers = text.replace('/register', '').split(',').map((num) => parseInt(num.trim(), 10)).filter((num) => !isNaN(num));
 
+    let nonReg = true;
     let response = 'Registered Groups:\n';
     numbers.forEach((num) => {
         const group = groupList.find((g) => g.number === num);
         if (group && !registeredGroups.includes(group.id)) {
             registeredGroups.push(group.id);
-            response += `${group.name}\n`;
+            response += ` - ${group.name}\n`;
+            nonReg = false;
         }
     });
+    if (nonReg) {
+        response += "None."
+    }
 
     saveAllowedGroups(registeredGroups);
     await sock.sendMessage(sender, { text: response });
@@ -272,27 +308,119 @@ async function registerGroups(sock, sender, text, groupList) {
 async function listRegisteredGroups(sock, sender) {
     const registeredGroups = loadAllowedGroups();
 
-    if (registeredGroups.length === 0) {
+    if (groupisEmpty(registeredGroups)) {
         await sock.sendMessage(sender, { text: 'No groups are currently registered.' });
         return;
     }
 
+    let count = 0;
     let response = 'Registered Groups:\n';
     for (const groupId of registeredGroups) {
         try {
+            count += 1
             const groupMetadata = await sock.groupMetadata(groupId);
-            response += `- ${groupMetadata.subject}\n`;
+            response += `${count}. ${groupMetadata.subject}\n`;
         } catch (error) {
             console.error(`Error fetching metadata for group ID: ${groupId}`, error);
             response += `- Unknown Group (ID: ${groupId})\n`;
         }
+    }
+    registeredList = registeredGroups;
+    if (count == 0) {
+        response += "None."
+    }
+
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function registerOcrGroups(sock, sender, text, groupList) {
+    const registeredGroups = ocrGroup;
+    const numbers = text.replace('/ocr-register', '').split(',').map((num) => parseInt(num.trim(), 10)).filter((num) => !isNaN(num));
+    let nonReg = true;
+    let response = 'Registered OCR Groups:\n';
+    numbers.forEach((num) => {
+        const group = groupList.find((g) => g.number === num);
+        if (group && !registeredGroups.includes(group.id)) {
+            registeredGroups.push(group.id);
+            response += ` - ${group.name}\n`;
+            nonReg = false;
+        }
+    });
+
+    if (nonReg) {
+        response += "None.";
+    }
+
+    saveOcrGroups(registeredGroups);
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function listOcrGroups(sock, sender) {
+    const registeredGroups = ocrGroup;
+    if (groupisEmpty(registeredGroups)) {
+        await sock.sendMessage(sender, { text: 'No groups are currently registered for OCR. ' });
+        return;
+    }
+
+    let count = 0;
+    let response = 'Registered OCR Groups:\n';
+    for (const groupId of registeredGroups) {
+        try {
+            count += 1;
+            const groupMetadata = await sock.groupMetadata(groupId);
+            response += `${count}. ${groupMetadata.subject}\n`;
+        } catch (error) {
+            logger.error(`Error fetching metadata for group ID: ${groupId}`, error);
+            response += `- Unknown Group (ID: ${groupId})\n`;
+        }
+    }
+    registeredOcrList = registeredGroups;
+    if (count == 0) {
+        response += "None."
+    }
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function deregisterGroups(sock, sender, text) {
+    const indexesToRemove = text.replace('/deregister', '').split(',').map(num => parseInt(num.trim(), 10)).filter(num => !isNaN(num) && num > 0);
+    logger.debug(`Removal of indices ${indexesToRemove} from list ${registeredOcrList}.`)
+    if (indexesToRemove.length === 0) {
+        await sock.sendMessage(sender, { text: "No valid numbers provided. Please specify indexes to deregister." });
+    }
+    registeredList = registeredList.filter((_, index) => !indexesToRemove.includes(index + 1));
+
+    logger.info(`New list: ${registeredList}.`)
+    saveAllowedGroups(registeredList);
+
+    let response = "Updated Registered Groups:\n" + registeredList.map((group, index) => `${index + 1}. ${getGroupName(sock, group)}`).join('\n');
+    if (registeredList.length === 0) {
+        response += "None.";
+    }
+
+    await sock.sendMessage(sender, { text: response });
+}
+
+async function deregisterOcrGroups(sock, sender, text) {
+    const indexesToRemove = text.replace('/ocr-deregister', '').split(',').map(num => parseInt(num.trim(), 10)).filter(num => !isNaN(num) && num > 0);
+    if (indexesToRemove.length === 0) {
+        await sock.sendMessage(sender, { text: "No valid numbers provided. Please specify indexes to deregister." });
+    }
+    logger.debug(`Removal of indices ${indexesToRemove} from list ${registeredOcrList}.`)
+
+    logger.info(`New list: ${registeredList}.`)
+    registeredOcrList = registeredOcrList.filter((_, index) => !indexesToRemove.includes(index + 1));
+
+    saveOcrGroups(registeredOcrList);
+
+    let response = "Updated OCR Registered Groups:\n" + registeredOcrList.map((group, index) => `${index + 1}. ${getGroupName(sock, group)}`).join('\n');
+    if (registeredOcrList.length === 0) {
+        response += "None.";
     }
 
     await sock.sendMessage(sender, { text: response });
 }
 
 function addEnvelopes(rawString) {
-    // Load the inventory from file
     let inventory = fs.existsSync(inventoryPath) ? JSON.parse(fs.readFileSync(inventoryPath, 'utf-8')) : {};
 
     // Normalize inventory keys to lowercase for case insensitivity
@@ -301,18 +429,16 @@ function addEnvelopes(rawString) {
         return acc;
     }, {});
 
-    // Parse the input string
     const lines = rawString.replace(/pcs/g, '').split('\n').slice(1); // Remove "pcs" and split lines
     const additionMap = new Map();
 
     lines.forEach((line) => {
         const [key, value] = line.split(':').map((s) => s.trim());
         if (key && value && !isNaN(value)) {
-            additionMap.set(key.toLowerCase(), parseInt(value, 10)); // Store in lowercase
+            additionMap.set(key.toLowerCase(), parseInt(value, 10));
         }
     });
 
-    // Add the parsed quantities to the inventory
     let response = 'Envelope Addition Results:\n';
     additionMap.forEach((quantity, envelopeType) => {
         if (normalizedInventory[envelopeType] !== undefined) {
@@ -331,13 +457,12 @@ function addEnvelopes(rawString) {
     }, {});
 
     fs.writeFileSync(inventoryPath, JSON.stringify(finalInventory, null, 2));
-    console.log('Envelope inventory updated:', finalInventory);
+    logger.debug('Envelope inventory updated:', finalInventory);
 
     return response;
 }
 
 function addStamps(rawString) {
-    // Load the stamp inventory from file
     let stampInventory = fs.existsSync(stampInventoryPath) ? JSON.parse(fs.readFileSync(stampInventoryPath, 'utf-8')) : {};
 
     // Normalize inventory keys to lowercase for case insensitivity
@@ -346,18 +471,16 @@ function addStamps(rawString) {
         return acc;
     }, {});
 
-    // Parse the input string
     const lines = rawString.replace(/pcs/g, '').split('\n').slice(1); // Remove "pcs" and split lines
     const additionMap = new Map();
 
     lines.forEach((line) => {
         const [key, value] = line.split(':').map((s) => s.trim());
         if (key && value && !isNaN(value)) {
-            additionMap.set(key.toLowerCase(), parseInt(value, 10)); // Store in lowercase
+            additionMap.set(key.toLowerCase(), parseInt(value, 10));
         }
     });
 
-    // Add the parsed quantities to the stamp inventory
     let response = 'Stamp Addition Results:\n';
     additionMap.forEach((quantity, stampType) => {
         if (normalizedStampInventory[stampType] !== undefined) {
@@ -376,13 +499,12 @@ function addStamps(rawString) {
     }, {});
 
     fs.writeFileSync(stampInventoryPath, JSON.stringify(finalStampInventory, null, 2));
-    console.log('Stamp inventory updated:', finalStampInventory);
+    logger.debug('Stamp inventory updated:', finalStampInventory);
 
     return response;
 }
 
 function calculateTotalCost(rawString) {
-    // Load existing prices
     const prices = loadPrices();
 
     const lines = rawString.split('\n').slice(1); // Remove the command line
@@ -392,7 +514,6 @@ function calculateTotalCost(rawString) {
     lines.forEach((line) => {
         const [envelopeType, quantity] = line.split(':').map((s) => s.trim());
         if (envelopeType && quantity && !isNaN(quantity)) {
-            // Find existing match ignoring case
             const existingKey = Object.keys(prices).find(
                 (key) => key.toUpperCase() === envelopeType.toUpperCase()
             );
@@ -416,9 +537,9 @@ function calculateTotalCost(rawString) {
 
 function printMatch(rowStr, similarity, caption) {
     let indicator = '🔴';
-    if (similarity > threshold){
+    if (similarity > threshold) {
         indicator = '🟢';
-    } else if (similarity > 0.5){
+    } else if (similarity > 0.5) {
         indicator = '🟠';
     }
     let row = rowStr.join(', ').trim(" ").trim("*").replace('*', 'x');
@@ -489,7 +610,7 @@ function closestRow(ocrResult, reference) {
     reference.forEach((row) => {
         const preprocessedRow = Object.entries(row)
             .filter(([key]) => !['ID', 'Quantity'].includes(key))
-            .map(([_, value]) => value) // Extract the values
+            .map(([_, value]) => value)
             .join(' ');
 
         const similarity = stringSimilarity.compareTwoStrings(preprocessedOcr, preprocessedRow);
@@ -506,6 +627,7 @@ function closestRow(ocrResult, reference) {
 
 let isOcrSessionActive = false;
 let isAwaitingCsv = false;
+let freshSession = false;
 let ocrResults = [];
 
 async function startOcrSession(sock, sender) {
@@ -580,65 +702,80 @@ async function handleImage(sock, sender, imageBuffer, caption) {
     }
 }
 
-
-// Bot initialization
 async function startBot() {
 
     logger.info('Bot is starting...');
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
-    const sock = makeWASocket({ auth: state });
+    const sock = makeWASocket({
+        auth: state,
+        syncFullHistory: false,
+        defaultQueryTimeoutMs: undefined
+    });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
 
-        if (update.error) {
-            logger.error(`Error in connection: ${update.error}`);
-            // Decide on reconnection logic based on error specifics
-        }
-
-        const { connection, lastDisconnect, qr } = update;
         logger.info(`Connection update event: ${JSON.stringify(update)}`);
 
-        if (qr) {
+        if (update.qr) {
+            logger.info("New QR generated")
             console.log('Scan the QR code below to log in:');
-            logger.info('QR code generated.');
-            qrcode.generate(qr, { small: true });
+            qrcode.generate(update.qr, { small: true });
+            freshSession = true;
         }
 
+        logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
+
         if (connection === 'open') {
-            console.log('Bot is now connected!');
-            logger.info('Bot reconnected with saved credentials');
+            logger.info("Bot has been connected successfully")
+            reconnectionAttempts = 0;
+            sock.autoReconnecting = false;
         } else if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting...', shouldReconnect);
-            logger.info('Connection closed, trying to reconnect...');
-            if (shouldReconnect) startBot();
+            if (lastDisconnect?.reason === DisconnectReason.connectionClosed) {
+                logger.error('Precondition required, can no longer reconnect, exiting peacefully.');
+                process.exit(1); // Exit the process to let PM2 restart it
+            }
+            if (lastDisconnect?.reason === DisconnectReason.conflict && !freshSession) {
+                logger.info('Session replacement detected, will not reconnect.');
+                return;
+            }
+            if (!sock.autoReconnecting) {
+                reconnectionAttempts++;
+                logger.info(`Reconnection attempt: ${reconnectionAttempts}`);
+                if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
+                    logger.error('Maximum reconnection attempts reached, bot will exit.');
+                    process.exit(1);
+                } else {
+                    sock.autoReconnecting = true;
+                    logger.info("No reconnection attempts found, reconnecting now...")
+                    startBot(); // Controlled reconnection
+                }
+            }
+        } else if (connection === 'close' && lastDisconnect?.error?.output?.statusCode === 428) {
+            // Handle specific case where connection closure was due to a critical error
+            logger.error('Critical error detected: Connection Closed. Bot will exit.');
+            process.exit(1);
         }
     });
 
-    // WebSocket state monitoring
-    setInterval(() => {
-        if (sock && sock.ws.readyState !== 1) {
-            logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
-            startBot();  // Attempt to reconnect if not open
-        } else {
-            logger.info('WebSocket is still open.');
-        }
-    }, 5 * 60 * 1000);  // Check every 5 minutes
-    
-    //keep alive
-    setInterval(() => {
-        if (sock && sock.ws.readyState === 1) { // 1 = Open
-            sock.ws.ping();
-            console.log('Ping sent to keep connection alive.');
-        }
-    }, 30000); // Ping every 30 seconds
+    if (sock) {
+        sock.ev.on('connection.update', update => {
+            if (update.connection === 'open') {
+                logger.info('Connection is now open, monitoring for automatic operations...');
+                setTimeout(() => {
+                    // Log a status update after a delay, to see if automatic operations complete
+                    logger.info('Checking status post connection open...');
+                }, 60000); // Check 1 minute after opening
+            }
+        });
+    }
 
     sock.ev.on('messages.upsert', async (m) => {
         delay(369);
         const message = m.messages[0];
-        if (!message.message) return; //|| message.key.fromMe
+        if (!message.message) return;
 
         const sender = message.key.remoteJid;
         const text = message.message?.conversation || "";
@@ -682,6 +819,45 @@ async function startBot() {
                 return;
             }
 
+            if (text.startsWith('/ocr-list')) {
+                await listOcrGroups(sock, sender);
+                logger.info('Listing OCR enabled groups');
+                logger.debug("Found:", ocrGroup);
+                return;
+            }
+
+            if (text.startsWith('/ocr-register') && sock.groupList) {
+                let oldGroups = loadAllowedGroups();
+                await registerOcrGroups(sock, sender, text, sock.groupList);
+                logger.info('Registering groups');
+                logger.debug("Received:", text);
+                logger.debug("Before:", oldGroups);
+                logger.info("After", loadAllowedGroups());
+                return;
+            }
+
+            if (text.startsWith('/ocr-deregister')) {
+                if (groupisEmpty(registeredOcrList)) {
+                    logger.info('No list set before calling deregister');
+                    await sock.sendMessage(sender, { text: 'Please call the /ocr-list function before deregistering' });
+                    return;
+                }
+                logger.info("Removing groups for OCR:");
+                await deregisterOcrGroups(sock, sender, text);
+                return;
+            }
+
+            if (text.startsWith('/deregister')) {
+                if (groupisEmpty(registeredList)) {
+                    logger.info('No list set before calling deregister');
+                    await sock.sendMessage(sender, { text: 'Please call the /list-registered function before deregistering' });
+                    return;
+                }
+                logger.info("Removing groups:");
+                await deregisterGroups(sock, sender, text);
+                return;
+            }
+
             if (text.startsWith('/ocr-reference')) {
                 isAwaitingCsv = true;
                 await sock.sendMessage(sender, { text: 'Please send the CSV file now, making sure there are no captions on the attachment.' });
@@ -693,10 +869,9 @@ async function startBot() {
                 const documentMessage = message.message.documentMessage;
                 const mimeType = documentMessage.mimetype || '';
 
-                // Check if the MIME type is valid for a CSV
                 if (!['text/csv', 'application/vnd.ms-excel'].includes(mimeType)) {
                     logger.warn('Received non-CSV file.');
-                    isAwaitingCsv = false; // Reset flag
+                    isAwaitingCsv = false;
                     await sock.sendMessage(sender, { text: 'Invalid file type. Please send a CSV file.' });
                     return;
                 }
@@ -704,7 +879,6 @@ async function startBot() {
                 try {
                     const filePath = path.resolve(__dirname, 'reference.csv');
 
-                    // Download the document as a stream
                     const stream = await downloadMediaMessage(message);
                     if (!stream) {
                         logger.error('Failed to download document.');
@@ -712,7 +886,6 @@ async function startBot() {
                         return;
                     }
 
-                    // Convert stream to buffer
                     const buffer = await new Promise((resolve, reject) => {
                         const chunks = [];
                         stream.on('data', (chunk) => chunks.push(chunk));
@@ -726,21 +899,18 @@ async function startBot() {
                         return;
                     }
 
-                    // Save the file locally
                     fs.writeFileSync(filePath, buffer);
                     logger.info(`File saved at ${filePath}`);
 
-                    // Load reference data from the file
                     referenceData = await loadReference(filePath);
-                    fs.unlinkSync(filePath); // Delete the file after loading reference data
+                    fs.unlinkSync(filePath);
 
-                    // Confirm success to the user
                     await sock.sendMessage(sender, { text: 'Reference data loaded successfully.' });
                 } catch (error) {
                     logger.error('Error handling the CSV file:', error);
                     await sock.sendMessage(sender, { text: 'An error occurred while loading the reference data. Please try again.' });
                 } finally {
-                    isAwaitingCsv = false; // Reset flag after processing
+                    isAwaitingCsv = false;
                 }
                 return;
             }
@@ -755,7 +925,7 @@ async function startBot() {
                 return;
             }
 
-            if (message.message.imageMessage) {
+            if (message.message.imageMessage && ocrGroup.includes(sender)) {
                 if (!isOcrSessionActive) {
                     logger.warn('Image received outside of OCR session. Ignoring.');
                     await sock.sendMessage(sender, { text: 'OCR session is not active. Start with /ocr-start.' });
@@ -852,7 +1022,6 @@ async function startBot() {
                 return;
             }
         } else {
-            console.log(`Message ignored from unregistered group: ${sender}`);
             logger.info(`Ignored Message from ${sender}`);
         }
     });

@@ -15,6 +15,20 @@ To set up on your device
     - `npm install` to install all dependencies
     - `node bot.js` to start the bot once dependencies are completely installed
 
+If the bot keeps timing out after random intervals:
+1. Install pm2 globally on machine
+    - `npm install -g pm2`
+    - `pm2 start bot.js --name "bot"` for bare bones managed run
+    - `pm2 start bot.js --name "bot" --output /path/to/output.log --error /path/to/error.log` for logged run
+2. For logs rotation 
+    - `pm2 install pm2-logrotate` this will do a default log rotation unless you set it again using commands
+3. Useful PM2 commands
+    - `pm2 logs bot` to see the bot's running logs
+    - `pm2 info bot` to see the pm managed information
+    - `pm2 stop bot`
+    - `pm2 delete bot`
+
+
 #### Registering WhatsApp account
 A valid account must be used to register the bot, and please make sure you have at least 1 linked device slot available for the bot to occupy.
 1. The bot will have to all access to your chats as it has to listen to keywords
