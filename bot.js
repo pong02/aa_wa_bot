@@ -18,7 +18,7 @@ const csv = require('csv-parser');
 const { get } = require('https');
 const dataStorePath = './datastore.json';
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const MAX_RECONNECTION_ATTEMPTS = 20; 
+const MAX_RECONNECTION_ATTEMPTS = 20;
 
 // globals 
 let threshold = 0.75; //default
@@ -87,7 +87,7 @@ function saveOcrGroups(groupIds) {
     logger.debug("Before OCR saved:", config)
     config.targets = groupIds;
     ocrGroup = groupIds;
-    logger.debug("New OCR groups:",config)
+    logger.debug("New OCR groups:", config)
     logger.debug(`Added groups ${groupIds} to ocr targets`)
     fs.writeFileSync(ocrConfig, JSON.stringify(config, null, 2), 'utf-8');
 }
@@ -135,7 +135,7 @@ function addPrices(rawString) {
         }
     });
 
-    savePrices(prices); // Save updated prices
+    savePrices(prices);
     return response;
 }
 
@@ -297,7 +297,7 @@ async function registerGroups(sock, sender, text, groupList) {
             nonReg = false;
         }
     });
-    if (nonReg){
+    if (nonReg) {
         response += "None."
     }
 
@@ -326,7 +326,7 @@ async function listRegisteredGroups(sock, sender) {
         }
     }
     registeredList = registeredGroups;
-    if (count == 0){
+    if (count == 0) {
         response += "None."
     }
 
@@ -347,7 +347,7 @@ async function registerOcrGroups(sock, sender, text, groupList) {
         }
     });
 
-    if(nonReg){
+    if (nonReg) {
         response += "None.";
     }
 
@@ -375,7 +375,7 @@ async function listOcrGroups(sock, sender) {
         }
     }
     registeredOcrList = registeredGroups;
-    if(count == 0){
+    if (count == 0) {
         response += "None."
     }
     await sock.sendMessage(sender, { text: response });
@@ -386,14 +386,13 @@ async function deregisterGroups(sock, sender, text) {
     logger.debug(`Removal of indices ${indexesToRemove} from list ${registeredOcrList}.`)
     if (indexesToRemove.length === 0) {
         await sock.sendMessage(sender, { text: "No valid numbers provided. Please specify indexes to deregister." });
-    }    
+    }
     registeredList = registeredList.filter((_, index) => !indexesToRemove.includes(index + 1));
 
     logger.info(`New list: ${registeredList}.`)
     saveAllowedGroups(registeredList);
 
-    // Response to the user
-    let response = "Updated Registered Groups:\n" + registeredList.map((group, index) => `${index + 1}. ${getGroupName(sock,group)}`).join('\n');
+    let response = "Updated Registered Groups:\n" + registeredList.map((group, index) => `${index + 1}. ${getGroupName(sock, group)}`).join('\n');
     if (registeredList.length === 0) {
         response += "None.";
     }
@@ -405,17 +404,15 @@ async function deregisterOcrGroups(sock, sender, text) {
     const indexesToRemove = text.replace('/ocr-deregister', '').split(',').map(num => parseInt(num.trim(), 10)).filter(num => !isNaN(num) && num > 0);
     if (indexesToRemove.length === 0) {
         await sock.sendMessage(sender, { text: "No valid numbers provided. Please specify indexes to deregister." });
-    }    
+    }
     logger.debug(`Removal of indices ${indexesToRemove} from list ${registeredOcrList}.`)
 
     logger.info(`New list: ${registeredList}.`)
     registeredOcrList = registeredOcrList.filter((_, index) => !indexesToRemove.includes(index + 1));
 
-    // Save the updated OCR list
     saveOcrGroups(registeredOcrList);
 
-    // Response to the user
-    let response = "Updated OCR Registered Groups:\n" + registeredOcrList.map((group, index) => `${index + 1}. ${getGroupName(sock,group)}`).join('\n');
+    let response = "Updated OCR Registered Groups:\n" + registeredOcrList.map((group, index) => `${index + 1}. ${getGroupName(sock, group)}`).join('\n');
     if (registeredOcrList.length === 0) {
         response += "None.";
     }
@@ -424,7 +421,6 @@ async function deregisterOcrGroups(sock, sender, text) {
 }
 
 function addEnvelopes(rawString) {
-    // Load the inventory from file
     let inventory = fs.existsSync(inventoryPath) ? JSON.parse(fs.readFileSync(inventoryPath, 'utf-8')) : {};
 
     // Normalize inventory keys to lowercase for case insensitivity
@@ -433,18 +429,16 @@ function addEnvelopes(rawString) {
         return acc;
     }, {});
 
-    // Parse the input string
     const lines = rawString.replace(/pcs/g, '').split('\n').slice(1); // Remove "pcs" and split lines
     const additionMap = new Map();
 
     lines.forEach((line) => {
         const [key, value] = line.split(':').map((s) => s.trim());
         if (key && value && !isNaN(value)) {
-            additionMap.set(key.toLowerCase(), parseInt(value, 10)); // Store in lowercase
+            additionMap.set(key.toLowerCase(), parseInt(value, 10));
         }
     });
 
-    // Add the parsed quantities to the inventory
     let response = 'Envelope Addition Results:\n';
     additionMap.forEach((quantity, envelopeType) => {
         if (normalizedInventory[envelopeType] !== undefined) {
@@ -469,7 +463,6 @@ function addEnvelopes(rawString) {
 }
 
 function addStamps(rawString) {
-    // Load the stamp inventory from file
     let stampInventory = fs.existsSync(stampInventoryPath) ? JSON.parse(fs.readFileSync(stampInventoryPath, 'utf-8')) : {};
 
     // Normalize inventory keys to lowercase for case insensitivity
@@ -478,18 +471,16 @@ function addStamps(rawString) {
         return acc;
     }, {});
 
-    // Parse the input string
     const lines = rawString.replace(/pcs/g, '').split('\n').slice(1); // Remove "pcs" and split lines
     const additionMap = new Map();
 
     lines.forEach((line) => {
         const [key, value] = line.split(':').map((s) => s.trim());
         if (key && value && !isNaN(value)) {
-            additionMap.set(key.toLowerCase(), parseInt(value, 10)); // Store in lowercase
+            additionMap.set(key.toLowerCase(), parseInt(value, 10));
         }
     });
 
-    // Add the parsed quantities to the stamp inventory
     let response = 'Stamp Addition Results:\n';
     additionMap.forEach((quantity, stampType) => {
         if (normalizedStampInventory[stampType] !== undefined) {
@@ -514,7 +505,6 @@ function addStamps(rawString) {
 }
 
 function calculateTotalCost(rawString) {
-    // Load existing prices
     const prices = loadPrices();
 
     const lines = rawString.split('\n').slice(1); // Remove the command line
@@ -524,7 +514,6 @@ function calculateTotalCost(rawString) {
     lines.forEach((line) => {
         const [envelopeType, quantity] = line.split(':').map((s) => s.trim());
         if (envelopeType && quantity && !isNaN(quantity)) {
-            // Find existing match ignoring case
             const existingKey = Object.keys(prices).find(
                 (key) => key.toUpperCase() === envelopeType.toUpperCase()
             );
@@ -548,9 +537,9 @@ function calculateTotalCost(rawString) {
 
 function printMatch(rowStr, similarity, caption) {
     let indicator = '🔴';
-    if (similarity > threshold){
+    if (similarity > threshold) {
         indicator = '🟢';
-    } else if (similarity > 0.5){
+    } else if (similarity > 0.5) {
         indicator = '🟠';
     }
     let row = rowStr.join(', ').trim(" ").trim("*").replace('*', 'x');
@@ -621,7 +610,7 @@ function closestRow(ocrResult, reference) {
     reference.forEach((row) => {
         const preprocessedRow = Object.entries(row)
             .filter(([key]) => !['ID', 'Quantity'].includes(key))
-            .map(([_, value]) => value) // Extract the values
+            .map(([_, value]) => value)
             .join(' ');
 
         const similarity = stringSimilarity.compareTwoStrings(preprocessedOcr, preprocessedRow);
@@ -713,15 +702,13 @@ async function handleImage(sock, sender, imageBuffer, caption) {
     }
 }
 
-
-// Bot initialization
 async function startBot() {
 
     logger.info('Bot is starting...');
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
-    const sock = makeWASocket({ 
+    const sock = makeWASocket({
         auth: state,
-        syncFullHistory: false, 
+        syncFullHistory: false,
         defaultQueryTimeoutMs: undefined
     });
 
@@ -737,13 +724,13 @@ async function startBot() {
             console.log('Scan the QR code below to log in:');
             qrcode.generate(update.qr, { small: true });
             freshSession = true;
-        }    
+        }
 
         logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
-         
+
         if (connection === 'open') {
             logger.info("Bot has been connected successfully")
-            reconnectionAttempts = 0; 
+            reconnectionAttempts = 0;
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
             if (lastDisconnect?.reason === DisconnectReason.connectionClosed) {
@@ -759,7 +746,7 @@ async function startBot() {
                 logger.info(`Reconnection attempt: ${reconnectionAttempts}`);
                 if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
                     logger.error('Maximum reconnection attempts reached, bot will exit.');
-                    process.exit(1); // Exit the process to let PM2 restart it
+                    process.exit(1);
                 } else {
                     sock.autoReconnecting = true;
                     logger.info("No reconnection attempts found, reconnecting now...")
@@ -788,7 +775,7 @@ async function startBot() {
     sock.ev.on('messages.upsert', async (m) => {
         delay(369);
         const message = m.messages[0];
-        if (!message.message) return; //|| message.key.fromMe
+        if (!message.message) return;
 
         const sender = message.key.remoteJid;
         const text = message.message?.conversation || "";
@@ -850,7 +837,7 @@ async function startBot() {
             }
 
             if (text.startsWith('/ocr-deregister')) {
-                if (groupisEmpty(registeredOcrList)){
+                if (groupisEmpty(registeredOcrList)) {
                     logger.info('No list set before calling deregister');
                     await sock.sendMessage(sender, { text: 'Please call the /ocr-list function before deregistering' });
                     return;
@@ -861,7 +848,7 @@ async function startBot() {
             }
 
             if (text.startsWith('/deregister')) {
-                if (groupisEmpty(registeredList)){
+                if (groupisEmpty(registeredList)) {
                     logger.info('No list set before calling deregister');
                     await sock.sendMessage(sender, { text: 'Please call the /list-registered function before deregistering' });
                     return;
@@ -882,10 +869,9 @@ async function startBot() {
                 const documentMessage = message.message.documentMessage;
                 const mimeType = documentMessage.mimetype || '';
 
-                // Check if the MIME type is valid for a CSV
                 if (!['text/csv', 'application/vnd.ms-excel'].includes(mimeType)) {
                     logger.warn('Received non-CSV file.');
-                    isAwaitingCsv = false; // Reset flag
+                    isAwaitingCsv = false;
                     await sock.sendMessage(sender, { text: 'Invalid file type. Please send a CSV file.' });
                     return;
                 }
@@ -893,7 +879,6 @@ async function startBot() {
                 try {
                     const filePath = path.resolve(__dirname, 'reference.csv');
 
-                    // Download the document as a stream
                     const stream = await downloadMediaMessage(message);
                     if (!stream) {
                         logger.error('Failed to download document.');
@@ -901,7 +886,6 @@ async function startBot() {
                         return;
                     }
 
-                    // Convert stream to buffer
                     const buffer = await new Promise((resolve, reject) => {
                         const chunks = [];
                         stream.on('data', (chunk) => chunks.push(chunk));
@@ -915,21 +899,18 @@ async function startBot() {
                         return;
                     }
 
-                    // Save the file locally
                     fs.writeFileSync(filePath, buffer);
                     logger.info(`File saved at ${filePath}`);
 
-                    // Load reference data from the file
                     referenceData = await loadReference(filePath);
-                    fs.unlinkSync(filePath); // Delete the file after loading reference data
+                    fs.unlinkSync(filePath);
 
-                    // Confirm success to the user
                     await sock.sendMessage(sender, { text: 'Reference data loaded successfully.' });
                 } catch (error) {
                     logger.error('Error handling the CSV file:', error);
                     await sock.sendMessage(sender, { text: 'An error occurred while loading the reference data. Please try again.' });
                 } finally {
-                    isAwaitingCsv = false; // Reset flag after processing
+                    isAwaitingCsv = false;
                 }
                 return;
             }
