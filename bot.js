@@ -392,11 +392,22 @@ async function deregisterGroups(sock, sender, text) {
     logger.info(`New list: ${registeredList}.`)
     saveAllowedGroups(registeredList);
 
-    let response = "Updated Registered Groups:\n" + registeredList.map((group, index) => `${index + 1}. ${getGroupName(sock, group)}`).join('\n');
-    if (registeredList.length === 0) {
+    let response = "Updated Registered Groups:\n";
+    if (registeredList.length > 0) {
+        const groupNames = await Promise.all(
+            registeredList.map((group, index) => 
+                getGroupName(sock, group)
+                    .then(groupName => `${index + 1}. ${groupName}`)
+                    .catch(error => {
+                        logger.warn(`Failed to fetch name for group ${group}: ${error.message}`);
+                        return `${index + 1}. [Failed to fetch group name]`;
+                    })
+            )
+        );
+        response += groupNames.join('\n');
+    } else {
         response += "None.";
     }
-
     await sock.sendMessage(sender, { text: response });
 }
 
@@ -412,8 +423,20 @@ async function deregisterOcrGroups(sock, sender, text) {
 
     saveOcrGroups(registeredOcrList);
 
-    let response = "Updated OCR Registered Groups:\n" + registeredOcrList.map((group, index) => `${index + 1}. ${getGroupName(sock, group)}`).join('\n');
-    if (registeredOcrList.length === 0) {
+    let response = "Updated OCR Registered Groups:\n";
+    if (registeredList.length > 0) {
+        const groupNames = await Promise.all(
+            registeredList.map((group, index) => 
+                getGroupName(sock, group)
+                    .then(groupName => `${index + 1}. ${groupName}`)
+                    .catch(error => {
+                        logger.warn(`Failed to fetch name for group ${group}: ${error.message}`);
+                        return `${index + 1}. [Failed to fetch group name]`;
+                    })
+            )
+        );
+        response += groupNames.join('\n');
+    } else {
         response += "None.";
     }
 
