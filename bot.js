@@ -756,6 +756,11 @@ async function startBot() {
             reconnectionAttempts = 0;
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
+            if (lastDisconnect?.error?.output?.statusCode === 428) {
+                // Handle specific case where connection closure was due to a critical error
+                logger.error('Critical error detected: Connection Closed. Bot will exit.');
+                process.exit(1);
+            }
             if (lastDisconnect?.reason === DisconnectReason.connectionClosed) {
                 logger.error('Precondition required, can no longer reconnect, exiting peacefully.');
                 process.exit(1); // Exit the process to let PM2 restart it
@@ -776,10 +781,6 @@ async function startBot() {
                     startBot(); // Controlled reconnection
                 }
             }
-        } else if (connection === 'close' && lastDisconnect?.error?.output?.statusCode === 428) {
-            // Handle specific case where connection closure was due to a critical error
-            logger.error('Critical error detected: Connection Closed. Bot will exit.');
-            process.exit(1);
         }
     });
 
