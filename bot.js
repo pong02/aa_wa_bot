@@ -756,6 +756,7 @@ async function startBot() {
             reconnectionAttempts = 0;
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
+            logger.error(`Connection interrupted, status: ${lastDisconnect.error?.output?.statusCode}`)
             if (lastDisconnect?.error?.output?.statusCode === 428) {
                 // Handle specific case where connection closure was due to a critical error
                 logger.error('Critical error detected: Connection Closed. Bot will exit.');
