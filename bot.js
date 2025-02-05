@@ -756,7 +756,8 @@ async function startBot() {
             reconnectionAttempts = 0;
             sock.autoReconnecting = false;
         } else if (connection === 'close') {
-            logger.error(`Connection interrupted, status: ${lastDisconnect.error?.output?.statusCode}`)
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut ;
+            logger.error(`Connection interrupted, status: ${lastDisconnect.error?.output?.statusCode}, flag: ${shouldReconnect}`)
             if (lastDisconnect?.error?.output?.statusCode === 428) {
                 // Handle specific case where connection closure was due to a critical error
                 logger.error('Critical error detected: Connection Closed. Bot will exit.');
@@ -766,11 +767,8 @@ async function startBot() {
                 logger.error('Precondition required, can no longer reconnect, exiting peacefully.');
                 process.exit(1); // Exit the process to let PM2 restart it
             }
-            if (lastDisconnect?.reason === DisconnectReason.conflict && !freshSession) {
-                logger.info('Session replacement detected, will not reconnect.');
-                return;
-            }
-            if (!sock.autoReconnecting) {
+            
+            if (!sock.autoReconnecting && shouldReconnect) {
                 reconnectionAttempts++;
                 logger.info(`Reconnection attempt: ${reconnectionAttempts}`);
                 if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
@@ -781,6 +779,10 @@ async function startBot() {
                     logger.info("No reconnection attempts found, reconnecting now...")
                     startBot(); // Controlled reconnection
                 }
+            }
+            else {
+                logger.error('Unknown Error occured. Exiting peacefully');
+                process.exit(1); // Exit the process to let PM2 restart it
             }
         }
     });
