@@ -558,6 +558,27 @@ function calculateTotalCost(rawString) {
     return response;
 }
 
+function extractLabel(ocrText) {
+    // Step 1: Split by "To:"
+    let parts = ocrText.split(/To:/i); // Case-insensitive split
+    logger.info(`Removing Prefix noise, identified ${parts.length} to process`)
+    let extracted = ocrText;
+    // Step 2: Take the last part (actual label content)
+    if (parts.length >= 2){
+        extracted = parts[parts.length - 1].trim();
+    } // If no "To:", return string as is
+
+    // Step 3: Remove everything after the item & quantity marker
+    starMarker = extracted.lastIndexOf('*');
+    if (starMarker !== -1) {
+        extracted = extracted.substring(0, Math.max(0, starMarker + 3)).trim();
+    }
+
+    logger.info(`[ ! ] Successfully Recognized label in ocr result: ${extracted}`)
+
+    return extracted;
+}
+
 function printMatch(rowStr, similarity, caption) {
     let indicator = '🔴';
     if (similarity > threshold) {
@@ -619,14 +640,14 @@ function preprocessLabel(text) {
 
 
 function closestRow(ocrResult, reference) {
-    const preprocessedOcr = preprocessLabel(ocrResult);
-
+    const filteredOcr = extractLabel(preprocessLabel(ocrResult));
 
     if (reference.length === 0) {
-        return { match: preprocessedOcr, confidence: 0 }
+        logger.info("Reference not found, defaulting 0% match")
+        return { match: filteredOcr, confidence: 0 }
     }
 
-    logger.debug(`Matching Label ${preprocessedOcr} with reference data...`)
+    logger.debug(`Matching Label ${filteredOcr} with reference data...`)
 
     let bestMatch = { similarity: 0, row: null };
 
@@ -636,7 +657,9 @@ function closestRow(ocrResult, reference) {
             .map(([_, value]) => value)
             .join(' ');
 
-        const similarity = stringSimilarity.compareTwoStrings(preprocessedOcr, preprocessedRow);
+        const similarity = stringSimilarity.compareTwoStrings(filteredOcr, preprocessedRow);
+
+        logger.info(`+ Similarity: ${similarity} \n ${filteredOcr} | [${preprocessedRow}]`);
 
         if (similarity > bestMatch.similarity) {
             bestMatch = { similarity, row };
@@ -650,7 +673,6 @@ function closestRow(ocrResult, reference) {
 
 let isOcrSessionActive = false;
 let isAwaitingCsv = false;
-let freshSession = false;
 let ocrResults = [];
 
 async function startOcrSession(sock, sender) {
@@ -717,11 +739,12 @@ async function handleImage(sock, sender, imageBuffer, caption) {
     } else if (match) {
         logger.info('Low confidence for the image. Review required.');
         await sock.sendMessage(sender, {
-            text: printMatch(Object.values(match), confidence, caption) + "\n\n" + printOCR(ocrText, caption)
+            text: printMatch(Object.values(match), confidence, caption) + "\n\n" + printOCR(extractLabel(ocrText), caption)
         });
     } else {
         logger.info('No matching row found for the image.');
-        await sock.sendMessage(sender, { text: 'No matching row found in the reference data.' });
+        logger.info(match)
+        await sock.sendMessage(sender, { text: `No matching row found in the reference data. OCR Result: ${ocrText}` });
     }
 }
 
@@ -746,7 +769,6 @@ async function startBot() {
             logger.info("New QR generated")
             console.log('Scan the QR code below to log in:');
             qrcode.generate(update.qr, { small: true });
-            freshSession = true;
         }
 
         logger.info(`WebSocket is not open, current state: ${sock.ws.readyState}`);
